@@ -23,6 +23,10 @@ struct Config {
     /// 反而拖慢松手后的最终结果。
     var partialIntervalSeconds: Double = 1.2
 
+    /// 文字送进输入框的方式。粘贴最快，逐字输入兼容性更好。
+    /// 安全输入模式下两者都会被系统拦截，那时会自动改走辅助功能接口。
+    var insertionMethod: String = InsertionMethod.paste.rawValue
+
     /// 改这个要重启转写服务才生效
     var model: String = "Qwen/Qwen3-ASR-0.6B"
 
@@ -48,6 +52,11 @@ struct Config {
     /// serverURL 写坏了不该让整个 App 崩掉，退回默认地址
     private var baseURL: URL {
         URL(string: serverURL) ?? URL(string: "http://127.0.0.1:8765")!
+    }
+
+    /// 配置里写了个不认识的值时退回默认，不要让听写整个失效
+    var resolvedInsertionMethod: InsertionMethod {
+        InsertionMethod(rawValue: insertionMethod) ?? .paste
     }
 
     var transcribeURL: URL { baseURL.appendingPathComponent("transcribe") }
@@ -76,6 +85,8 @@ extension Config: Codable {
             ?? fallback.showLiveOverlay
         partialIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .partialIntervalSeconds)
             ?? fallback.partialIntervalSeconds
+        insertionMethod = try c.decodeIfPresent(String.self, forKey: .insertionMethod)
+            ?? fallback.insertionMethod
         model = try c.decodeIfPresent(String.self, forKey: .model)
             ?? fallback.model
     }

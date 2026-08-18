@@ -360,16 +360,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 先把最终结果显示出来，用户能看到它跟中间结果差在哪
                 overlay.update(text, isFinal: true)
 
-                switch TextInjector.insert(text) {
-                case .inserted:
+                switch TextInjector.insert(text, method: config.resolvedInsertionMethod) {
+                case .inserted(let method):
+                    NSLog("MixDictate: 已通过 %@ 插入", method.rawValue)
+                    overlay.hide(after: 1.2)
+                case .insertedViaAccessibility:
+                    // 安全输入模式挡住了合成按键，但辅助功能接口写进去了
+                    NSLog("MixDictate: 安全输入模式，已改走辅助功能接口")
                     overlay.hide(after: 1.2)
                 case .needsAccessibility:
                     overlay.hide()
                     reportAccessibilityMissing()
                 case .blockedBySecureInput:
-                    // 安全输入模式下系统拦截一切合成按键。文字已经在剪贴板里了。
-                    overlay.update("安全输入模式挡住了自动输入，按 Cmd+V 粘贴", isFinal: true)
-                    overlay.hide(after: 4)
+                    // 三条路都走不通。文字已经在剪贴板里了。
+                    overlay.update(
+                        "有 App 开着安全输入模式，自动输入被系统拦截。文字已复制，按 Cmd+V 粘贴",
+                        isFinal: true
+                    )
+                    overlay.hide(after: 5)
                 }
                 state = .idle
             } catch {

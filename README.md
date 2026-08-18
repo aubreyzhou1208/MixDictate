@@ -117,8 +117,26 @@ mixdictate_server  Qwen3-ASR (MLX, Metal GPU) + 热词 context 偏置
 hotwords.apply()   别名替换、术语大小写归一
 postprocess()      去填充词 → 中英加空格 → 标点全角化
    ↓
-TextInjector       写剪贴板 → 合成 Cmd+V → 还原剪贴板
+TextInjector       三级降级，见下
 ```
+
+### 文字怎么送进输入框
+
+单一机制做不到"任何地方都能输入"，所以按顺序降级：
+
+| 顺序 | 机制 | 覆盖面 | 盲区 |
+|---|---|---|---|
+| 1 | 安全输入模式开着时 → 辅助功能接口直写 | 不受合成按键限制 | 终端、部分 Electron 的文本视图不支持 |
+| 2 | 剪贴板 + 合成 Cmd+V（默认） | 绝大多数 App，含终端 | 安全输入模式；个别拦截粘贴的 App |
+| 3 | 合成 Unicode 按键逐字输入（可选） | 拦截粘贴的 App | 安全输入模式；长文本较慢 |
+
+**安全输入模式**是 macOS 的一个全局开关，密码框和某些终端配置会打开它。
+开着的时候系统会拦截**一切**合成按键 —— 不报错、不提示，纯粹是没反应。
+这时唯一的路是辅助功能接口；那条也走不通的话，文字会留在剪贴板里，
+浮层会提示你按 Cmd+V。
+
+顺带说明：Terminal.app 默认**不**开安全输入，iTerm2 的
+"Secure Keyboard Entry" 也默认关闭，所以终端里正常能用。
 
 拆成两个进程是因为模型在 Python/MLX 里，而全局快捷键和文字注入必须用原生
 macOS API。HTTP 只走 127.0.0.1。
@@ -177,6 +195,7 @@ App 启动时先探一次 `/health`：已经有服务在跑就直接接管，否
 - **去掉口语词** —— "嗯""呃"这类
 - **中文标点转全角** —— 关掉后保持半角，写代码时更顺手
 - **实时结果浮层** —— 录音时在屏幕下方显示边说边出的文字
+- **输入方式** —— 粘贴（快）/ 逐字输入（兼容性更好）
 - **识别模型** —— 0.6B（快）/ 1.7B（更准）。换模型会自动重启服务。
 
 顶部还会显示**辅助功能权限状态** —— 没授权的话文字插不进输入框，
@@ -190,6 +209,7 @@ App 启动时先探一次 `/health`：已经有服务在跑就直接接管，否
   "stripFillers": true,
   "fullwidthPunctuation": true,
   "model": "Qwen/Qwen3-ASR-0.6B",
+  "insertionMethod": "paste",
   "showLiveOverlay": true,
   "partialIntervalSeconds": 1.2,
   "minimumDurationSeconds": 0.3,

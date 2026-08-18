@@ -161,6 +161,21 @@ struct SettingsView: View {
                 .padding(6)
             }
 
+            GroupBox("输入方式") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("输入方式", selection: $model.config.insertionMethod) {
+                        ForEach(InsertionMethod.allCases, id: \.rawValue) { option in
+                            Text(option.label).tag(option.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    Text("先试粘贴。个别 App 会拦截粘贴，那种情况改成逐字输入。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(6)
+            }
+
             GroupBox("识别模型") {
                 VStack(alignment: .leading, spacing: 8) {
                     Picker("模型", selection: $model.config.model) {
