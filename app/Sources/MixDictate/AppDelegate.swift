@@ -101,15 +101,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 菜单栏
 
     private func refreshStatusItem() {
-        let title: String
-        switch state {
-        case .idle:         title = "🎙"
-        case .recording:    title = "🔴"
-        case .transcribing: title = "⏳"
-        case .failed:       title = "⚠️"
+        guard let button = statusItem.button else { return }
+
+        if let image = statusImage {
+            button.image = image
+            button.title = ""
+        } else {
+            // SF Symbol 拿不到时退回 emoji，至少菜单栏上还有个能点的东西
+            button.image = nil
+            button.title = fallbackTitle
         }
-        statusItem.button?.title = title
-        statusItem.button?.toolTip = tooltip
+        button.toolTip = tooltip
+    }
+
+    /// 菜单栏图标。
+    ///
+    /// 待命和转写用模板图像（isTemplate = true）—— 模板图像会被系统按菜单栏的
+    /// 明暗自动反色，浅色模式下是黑的，深色模式下是白的，跟旁边的系统图标一致。
+    /// 录音和出错状态需要颜色来抓注意力，所以走 paletteColors，不能当模板。
+    private var statusImage: NSImage? {
+        let symbol: String
+        let tint: NSColor?
+
+        switch state {
+        case .idle:
+            symbol = "mic"
+            tint = nil
+        case .recording:
+            symbol = "mic.fill"
+            tint = .systemRed
+        case .transcribing:
+            symbol = "waveform"
+            tint = nil
+        case .failed:
+            symbol = "exclamationmark.triangle.fill"
+            tint = .systemOrange
+        }
+
+        guard let base = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip) else {
+            return nil
+        }
+
+        var configuration = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        if let tint {
+            configuration = configuration.applying(.init(paletteColors: [tint]))
+        }
+
+        let image = base.withSymbolConfiguration(configuration) ?? base
+        image.isTemplate = (tint == nil)
+        return image
+    }
+
+    private var fallbackTitle: String {
+        switch state {
+        case .idle:         return "🎙"
+        case .recording:    return "🔴"
+        case .transcribing: return "⏳"
+        case .failed:       return "⚠️"
+        }
     }
 
     private var tooltip: String {
