@@ -308,15 +308,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let client = TranscriptionClient(config: config)
             Task { await client.warmup() }
 
-            if config.showLiveOverlay {
-                // 实时写入时只给一个小指示器：文字已经在光标处了，浮层
-                // 再显示一遍是噪音；但完全不显示又会让人不确定它在不在工作。
-                overlay.show(
-                    style: config.liveInsertion ? .compact : .fullText,
-                    status: config.liveInsertion ? "正在听写" : "听着呢…"
-                )
+            // 实时写入模式下，小指示器是**唯一**的进行中反馈 —— 文字要过
+            // 一两秒才出现，这期间用户完全不知道它有没有在工作。所以它不受
+            // showLiveOverlay 控制：那个开关管的是显示全文的大浮层。
+            if config.liveInsertion {
+                overlay.show(style: .compact, status: "正在听写")
+            } else if config.showLiveOverlay {
+                overlay.show(style: .fullText, status: "听着呢…")
             }
-            // 实时写入也要靠中间结果，即使浮层关着
+
+            // 实时写入也要靠中间结果
             if config.showLiveOverlay || config.liveInsertion {
                 startPartialUpdates()
             }

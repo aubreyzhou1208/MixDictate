@@ -23,8 +23,11 @@ final class OverlayWindow {
     private var panel: NSPanel?
     private var label: NSTextField?
     private var hideWorkItem: DispatchWorkItem?
+    private var pulseTimer: Timer?
+    private var pulseBright = true
+    private var currentStatus = ""
 
-    private var width: CGFloat { style == .compact ? 210 : 560 }
+    private var width: CGFloat { style == .compact ? 230 : 560 }
     private let horizontalPadding: CGFloat = 20
     private let verticalPadding: CGFloat = 16
 
@@ -38,6 +41,7 @@ final class OverlayWindow {
         let panel = existingPanel()
         applyStatus(status)
         layout()
+        startPulse()
 
         // 不用 makeKeyAndOrderFront —— 那会抢焦点
         panel.orderFrontRegardless()
@@ -50,8 +54,29 @@ final class OverlayWindow {
         layout()
     }
 
+    /// 圆点做呼吸效果。静态的点看不出程序有没有卡住 ——
+    /// 会动的点一眼就知道它还活着，这正是这个指示器存在的意义。
+    private func startPulse() {
+        guard style == .compact else { return }
+        pulseTimer?.invalidate()
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.pulseBright.toggle()
+                self.applyStatus(self.currentStatus)
+            }
+        }
+    }
+
+    private func stopPulse() {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        pulseBright = true
+    }
+
     private func applyStatus(_ status: String) {
         guard let label else { return }
+        currentStatus = status
 
         guard style == .compact else {
             label.stringValue = status
@@ -63,7 +88,11 @@ final class OverlayWindow {
         // 文字保持次要色，不喧宾夺主。
         let text = NSMutableAttributedString(
             string: "● ",
-            attributes: [.foregroundColor: NSColor.systemRed]
+            attributes: [
+                .foregroundColor: pulseBright
+                    ? NSColor.systemRed
+                    : NSColor.systemRed.withAlphaComponent(0.25)
+            ]
         )
         text.append(
             NSAttributedString(
@@ -97,6 +126,8 @@ final class OverlayWindow {
 
     func hide(after delay: TimeInterval = 0) {
         hideWorkItem?.cancel()
+
+        stopPulse()
 
         guard delay > 0 else {
             panel?.orderOut(nil)
@@ -186,9 +217,11 @@ final class OverlayWindow {
         let panelHeight = textHeight + verticalPadding * 2
 
         let visible = screen.visibleFrame
+        // 抬得比 Dock 高一截。放太低会被 Dock 或者别的 App 的底部工具栏
+        // 挡住，用户就会以为"根本没显示"。
         let origin = NSPoint(
             x: visible.midX - width / 2,
-            y: visible.minY + 120  // 抬离屏幕底部，别压住 Dock
+            y: visible.minY + 160
         )
 
         panel.setFrame(
