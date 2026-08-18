@@ -21,6 +21,21 @@ final class HotKeyMonitor {
         self.onRelease = onRelease
     }
 
+    /// 可以当"按住说话"键的修饰键。普通字母键不合适 —— 按住说话期间
+    /// 那个键会一直重复输入到当前输入框里。
+    static let selectableKeys: [(code: UInt16, name: String)] = [
+        (61, "右 Option"),
+        (58, "左 Option"),
+        (54, "右 Command"),
+        (62, "右 Control"),
+        (59, "左 Control"),
+        (60, "右 Shift"),
+    ]
+
+    static func displayName(for keyCode: UInt16) -> String {
+        selectableKeys.first { $0.code == keyCode }?.name ?? "键 \(keyCode)"
+    }
+
     /// 每个修饰键对应哪个 flag。必须按键区分，不能笼统看"有没有修饰键按着" ——
     /// 否则用户按着 Command 再按右 Option 时，松开右 Option 的那一刻
     /// modifierFlags 里仍留着 .command，会被误判成"还按着"，录音就永远停不下来。

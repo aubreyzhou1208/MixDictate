@@ -9,6 +9,7 @@ import logging
 import os
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 from contextlib import asynccontextmanager
@@ -62,6 +63,26 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="MixDictate", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
+def record_transcript(*, raw: str, text: str, elapsed: float) -> None:
+    """把每次转写的原始输出和处理后结果并排记下来。
+
+    调准确率靠的就是这个文件：说一段话，回头看哪些词听错了，
+    把它们加进热词表。只看最终结果分不清是模型听错了还是后处理改坏了，
+    所以两个都要留。
+    """
+    try:
+        line = (
+            f"{datetime.now():%Y-%m-%d %H:%M:%S}  [{elapsed:.2f}s]\n"
+            f"  原始: {raw}\n"
+            f"  输出: {text}\n\n"
+        )
+        with (paths.log_dir() / "transcripts.log").open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except OSError as exc:
+        # 日志写不了不该影响听写本身
+        log.warning("转写日志写入失败：%s", exc)
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -77,6 +98,7 @@ def health() -> dict:
 async def transcribe(
     audio: UploadFile = File(...),
     strip_fillers: bool = Form(True),
+    fullwidth_punct: bool = Form(True),
 ) -> JSONResponse:
     started = time.monotonic()
     payload = await audio.read()
@@ -101,10 +123,15 @@ async def transcribe(
 
     raw = result.text
     text = table.apply(raw)
-    text = postprocess(text, strip_filler_words=strip_fillers)
+    text = postprocess(
+        text,
+        strip_filler_words=strip_fillers,
+        fullwidth_punctuation=fullwidth_punct,
+    )
 
     elapsed = time.monotonic() - started
     log.info("[%.2fs] %s", elapsed, text or "（无内容）")
+    record_transcript(raw=raw, text=text, elapsed=elapsed)
 
     return JSONResponse(
         {

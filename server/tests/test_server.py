@@ -100,3 +100,28 @@ def test_empty_audio_is_rejected(client):
     )
     assert response.status_code == 400
     assert response.json()["error"]
+
+
+# ------------------------------------------------------------ 转写日志
+
+def test_transcript_log_records_raw_and_output(client, tmp_path, monkeypatch):
+    """调准确率全靠这个日志，原始输出和处理后结果都得留下。"""
+    from mixdictate_server import paths
+
+    monkeypatch.setenv("MIXDICTATE_HOME", str(tmp_path))
+
+    _transcribe(client, "把它部署到kubernetes上面")
+
+    logged = (paths.log_dir() / "transcripts.log").read_text(encoding="utf-8")
+    assert "kubernetes" in logged, "原始输出要能看到，否则分不清是模型错还是后处理错"
+    assert "Kubernetes" in logged, "处理后的结果也要记"
+
+
+def test_fullwidth_punct_flag_reaches_postprocess(client):
+    os.environ["MIXDICTATE_MOCK_TEXT"] = "这个 schema 要改吗?"
+    response = client.post(
+        "/transcribe",
+        files={"audio": ("speech.wav", _wav(), "audio/wav")},
+        data={"strip_fillers": "true", "fullwidth_punct": "false"},
+    )
+    assert response.json()["text"] == "这个 schema 要改吗?"

@@ -132,3 +132,16 @@ def test_full_chain():
 def test_empty_input():
     assert postprocess("") == ""
     assert postprocess("   ") == ""
+
+
+# ------------------------------------------------------------ 开关
+
+def test_fullwidth_punctuation_can_be_disabled():
+    # 写代码的场景里半角标点更顺手，得留个开关
+    raw = "这个 schema 要改吗?"
+    assert postprocess(raw, fullwidth_punctuation=False) == "这个 schema 要改吗?"
+    assert postprocess(raw, fullwidth_punctuation=True) == "这个 schema 要改吗？"
+
+
+def test_filler_stripping_can_be_disabled():
+    assert postprocess("嗯我知道", strip_filler_words=False) == "嗯我知道"

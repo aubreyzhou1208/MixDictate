@@ -151,12 +151,22 @@ def to_fullwidth_punct(text: str) -> str:
 
 # ---------------------------------------------------------------- 组装
 
-def postprocess(text: str, *, strip_filler_words: bool = True) -> str:
-    """完整后处理链。热词纠正在 hotwords.py 里，由调用方插在中间。"""
+def postprocess(
+    text: str,
+    *,
+    strip_filler_words: bool = True,
+    fullwidth_punctuation: bool = True,
+) -> str:
+    """完整后处理链。热词纠正在 hotwords.py 里，由调用方插在中间。
+
+    两个开关都由客户端传进来 —— 写代码的人爱写中文全角，写代码时又想要
+    半角，这个偏好没法替用户决定。
+    """
     if not text or not text.strip():
         return ""
     if strip_filler_words:
         text = strip_fillers(text)
     text = fix_spacing(text)
-    text = to_fullwidth_punct(text)
+    if fullwidth_punctuation:
+        text = to_fullwidth_punct(text)
     return text.strip()

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recorder = AudioRecorder()
     private var config = Config.load()
     private var server: ServerProcess!
+    private let settingsWindow = SettingsWindowController()
     private var lastError: String?
 
     private enum State {
@@ -31,12 +32,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server = ServerProcess(config: config)
         Task { @MainActor in await startServer() }
 
+        installHotKeyMonitor()
+    }
+
+    private func installHotKeyMonitor() {
+        monitor?.stop()
         monitor = HotKeyMonitor(
             keyCode: config.pushToTalkKeyCode,
             onPress: { [weak self] in self?.beginRecording() },
             onRelease: { [weak self] in self?.endRecording() }
         )
         monitor?.start()
+    }
+
+    // MARK: - 设置
+
+    @objc private func openSettings() {
+        settingsWindow.show(config: config) { [weak self] updated, modelChanged in
+            guard let self else { return }
+            self.config = updated
+
+            // 说话键立刻生效：把旧监听拆掉换新的
+            self.installHotKeyMonitor()
+            self.buildMenu()
+
+            // 模型是启动参数，只能重启服务
+            if modelChanged {
+                self.restartServer()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -60,13 +84,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func restartServer() {
+    @objc func restartServer() {
         server.stop()
         Task { @MainActor in await startServer() }
     }
 
     @objc private func openServerLog() {
         NSWorkspace.shared.open(ServerProcess.logURL)
+    }
+
+    /// 每次转写的原始输出和处理后结果。调准确率就看这个文件。
+    @objc private func openTranscriptLog() {
+        let url = ServerProcess.supportDirectory
+            .appendingPathComponent("logs/transcripts.log")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            let alert = NSAlert()
+            alert.messageText = "还没有转写记录"
+            alert.informativeText = "先说几句话试试，记录会自动写到这里。"
+            alert.runModal()
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - 录音 → 转写 → 插入
@@ -222,7 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let hint = NSMenuItem(
-            title: "按住 \(keyName(config.pushToTalkKeyCode)) 说话，松开插入文字",
+            title: "按住 \(HotKeyMonitor.displayName(for: config.pushToTalkKeyCode)) 说话，松开插入文字",
             action: nil,
             keyEquivalent: ""
         )
@@ -230,25 +268,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(hint)
         menu.addItem(.separator())
 
+        menu.addItem(NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "编辑热词表…", action: #selector(openHotwords), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "检查服务状态", action: #selector(checkServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "重启转写服务", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看服务日志…", action: #selector(openServerLog), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "查看转写记录…", action: #selector(openTranscriptLog), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MixDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         menu.items.forEach { $0.target = $0.action == #selector(NSApplication.terminate(_:)) ? nil : self }
         statusItem.menu = menu
-    }
-
-    private func keyName(_ code: UInt16) -> String {
-        switch code {
-        case 61: return "右 Option"
-        case 58: return "左 Option"
-        case 54: return "右 Command"
-        case 62: return "右 Control"
-        default: return "键 \(code)"
-        }
     }
 
     /// 热词表路径向服务端要，不能自己猜。

@@ -86,6 +86,7 @@ final class ServerProcess {
         var environment = ProcessInfo.processInfo.environment
         // 不关缓冲的话日志会卡在管道里，出问题时日志文件是空的，没法排错
         environment["PYTHONUNBUFFERED"] = "1"
+        environment["MIXDICTATE_MODEL"] = config.model
         task.environment = environment
 
         try task.run()

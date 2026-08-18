@@ -73,7 +73,7 @@ MixDictate 不进 Dock、不出现在 Cmd+Tab，只在系统状态栏（时钟�
 | 波形 | 正在转写 |
 | 橙色警告三角 | 出错了，点开菜单看原因 |
 
-点图标弹菜单：编辑热词表、检查服务状态、重启转写服务、查看服务日志、退出。
+点图标弹菜单：设置、编辑热词表、检查服务状态、重启转写服务、查看服务日志、查看转写记录、退出。
 
 用的是 SF Symbols 模板图像，浅色模式下是黑的、深色模式下是白的，跟旁边的系统图标一致。
 
@@ -136,7 +136,9 @@ App 启动时先探一次 `/health`：已经有服务在跑就直接接管，否
 ~/Library/Application Support/MixDictate/
 ├── venv/            App 用的 Python 环境
 ├── hotwords.txt     你的热词表
-└── logs/server.log  转写服务日志
+└── logs/
+    ├── server.log       转写服务日志（排错用）
+    └── transcripts.log  每次转写的原始输出 + 处理后结果（调准确率用）
 
 ~/.config/mixdictate/config.json   可选配置（见下）
 /Applications/MixDictate.app       App 本体
@@ -144,21 +146,64 @@ App 启动时先探一次 `/health`：已经有服务在跑就直接接管，否
 
 装完之后 App 不再依赖源码目录 —— 仓库可以挪走甚至删掉。
 
-## 配置
+## 设置
 
-可选，放在 `~/.config/mixdictate/config.json`，只写想改的字段即可：
+菜单栏图标 → **设置…**（或 `Cmd+,`）：
+
+- **说话键** —— 点按钮，然后按一下你想用的修饰键。保存后立刻生效。
+  可选：右/左 Option、右 Command、右/左 Control、右 Shift。
+  只能用修饰键 —— 普通字母键在按住说话期间会一直重复输入到输入框里。
+- **去掉口语词** —— "嗯""呃"这类
+- **中文标点转全角** —— 关掉后保持半角，写代码时更顺手
+- **识别模型** —— 0.6B（快）/ 1.7B（更准）。换模型会自动重启服务。
+
+设置存在 `~/.config/mixdictate/config.json`，也可以直接编辑：
 
 ```json
 {
   "pushToTalkKeyCode": 61,
-  "serverURL": "http://127.0.0.1:8765",
   "stripFillers": true,
-  "minimumDurationSeconds": 0.3
+  "fullwidthPunctuation": true,
+  "model": "Qwen/Qwen3-ASR-0.6B",
+  "minimumDurationSeconds": 0.3,
+  "serverURL": "http://127.0.0.1:8765"
 }
 ```
 
-按键码：右 Option `61`、左 Option `58`、右 Command `54`、右 Control `62`。
-默认用右 Option 是因为右 Command 跟很多 App 的快捷键冲突。
+只写想改的字段即可，缺的用默认值。
+
+## 测试准确率
+
+每次转写都会记到 `~/Library/Application Support/MixDictate/logs/transcripts.log`，
+**原始输出和处理后结果并排**：
+
+```
+2026-08-18 03:12:44  [0.83s]
+  原始: 把它部署到kubernetes上面,用github actions跑CI
+  输出: 把它部署到 Kubernetes 上面，用 GitHub actions 跑 CI
+```
+
+菜单里点「查看转写记录…」直接打开。
+
+两个都记是有意的：只看最终结果分不清**是模型听错了，还是后处理改坏了**。
+这两种问题的解法完全不同 —— 前者加热词，后者要改代码。
+
+### 建议的测试流程
+
+1. 找个文本编辑器，连续说 20-30 句你**平时真会说的话**（带上你常用的术语、人名、项目名）
+2. 打开转写记录，逐条看
+3. 分类：
+   - **原始就错**（比如 `kubernetes` 听成 `库伯内特斯`）→ 加进热词表，或加别名 `库伯内特斯 => Kubernetes`
+   - **原始对但输出错**（后处理把对的改坏了）→ 把这条贴出来，是代码 bug
+4. 改完热词表保存，重测那几句
+
+热词表的效果通常比换更大的模型明显 —— 先把热词调好再考虑上 1.7B。
+
+### 目前没有的
+
+- **情绪 / 语气识别**（"这句话是疑问还是感叹"之外的情感标签）—— Qwen3-ASR 不输出
+  情绪标签。需要的话得换 SenseVoice，那是另一个模型，另说。
+- 标点本身是有的：模型自己会输出，我们再做全角化和规则修正。
 
 ## 排错
 
@@ -197,7 +242,7 @@ Apple Silicon runner 上的 Swift 编译 + bundle 校验、shellcheck。
 
 ## 状态
 
-**早期原型。** Python 侧 32 个测试覆盖，Swift 侧由 CI 在 Apple Silicon runner
+**早期原型。** Python 侧 36 个测试覆盖，Swift 侧由 CI 在 Apple Silicon runner
 上编译验证。但**完整的录音 → 转写 → 注入流程还没在真机上端到端跑过** ——
 权限授予、真实模型推理、剪贴板注入在各 App 里的行为，这几段需要人工验证。
 

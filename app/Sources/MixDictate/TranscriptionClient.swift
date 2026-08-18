@@ -86,6 +86,10 @@ struct TranscriptionClient {
         line("Content-Disposition: form-data; name=\"strip_fillers\"\r\n\r\n")
         line("\(config.stripFillers)\r\n")
 
+        line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"fullwidth_punct\"\r\n\r\n")
+        line("\(config.fullwidthPunctuation)\r\n")
+
         line("--\(boundary)--\r\n")
         return body
     }

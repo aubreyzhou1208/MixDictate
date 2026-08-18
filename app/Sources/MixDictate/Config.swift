@@ -1,14 +1,23 @@
 import Foundation
 
-/// 运行时配置。默认值够用；想改就在 ~/.config/mixdictate/config.json 里覆盖。
+/// 运行时配置。存在 ~/.config/mixdictate/config.json，设置界面直接改这个文件。
 struct Config {
     /// 按住不放的说话键。61 = 右 Option。
     /// 右 Command(54) 也常见，但它跟很多 App 的快捷键冲突，所以默认用右 Option。
     var pushToTalkKeyCode: UInt16 = 61
     var serverURL: String = "http://127.0.0.1:8765"
+
+    /// 去掉"嗯""呃"这类口语填充词
     var stripFillers: Bool = true
+
+    /// 中文标点转全角。写代码时可能更想要半角，所以留成开关。
+    var fullwidthPunctuation: Bool = true
+
     /// 短于这个时长的录音直接丢弃 —— 多半是误触
     var minimumDurationSeconds: Double = 0.3
+
+    /// 改这个要重启转写服务才生效
+    var model: String = "Qwen/Qwen3-ASR-0.6B"
 
     static let path = FileManager.default
         .homeDirectoryForCurrentUser
@@ -17,6 +26,16 @@ struct Config {
     static func load() -> Config {
         guard let data = try? Data(contentsOf: path) else { return Config() }
         return (try? JSONDecoder().decode(Config.self, from: data)) ?? Config()
+    }
+
+    func save() throws {
+        try FileManager.default.createDirectory(
+            at: Self.path.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(self).write(to: Self.path, options: .atomic)
     }
 
     /// serverURL 写坏了不该让整个 App 崩掉，退回默认地址
@@ -31,6 +50,7 @@ struct Config {
 // 手写解码而不是用合成的：合成的 init(from:) 要求 JSON 里每个键都存在，
 // 只写了一个 pushToTalkKeyCode 的配置文件会整份解码失败，然后被 try? 吞掉 ——
 // 表现就是"我明明改了配置却完全没生效"。decodeIfPresent 才是想要的语义。
+// 这条在加字段之后更重要：老配置文件不能因为缺新字段就整份失效。
 extension Config: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -41,7 +61,24 @@ extension Config: Codable {
             ?? fallback.serverURL
         stripFillers = try c.decodeIfPresent(Bool.self, forKey: .stripFillers)
             ?? fallback.stripFillers
+        fullwidthPunctuation = try c.decodeIfPresent(Bool.self, forKey: .fullwidthPunctuation)
+            ?? fallback.fullwidthPunctuation
         minimumDurationSeconds = try c.decodeIfPresent(Double.self, forKey: .minimumDurationSeconds)
             ?? fallback.minimumDurationSeconds
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+            ?? fallback.model
+    }
+}
+
+/// 可选的模型。0.6B 够日常用，1.7B 更准但更吃内存和时间。
+enum ASRModel: String, CaseIterable {
+    case small = "Qwen/Qwen3-ASR-0.6B"
+    case large = "Qwen/Qwen3-ASR-1.7B"
+
+    var label: String {
+        switch self {
+        case .small: return "0.6B — 快（推荐）"
+        case .large: return "1.7B — 更准，慢一些"
+        }
     }
 }
