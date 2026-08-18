@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import array
 import io
+import math
+import struct
 import wave
 from dataclasses import dataclass
 
@@ -61,3 +63,26 @@ def inspect_wav(payload: bytes) -> WavInfo | None:
             info.peak = max(abs(int(s)) for s in samples) / 32767.0
 
     return info
+
+
+def warmup_wav(seconds: float = 0.6, sample_rate: int = 16_000) -> bytes:
+    """生成一段极轻微的音频，专门用来预热。
+
+    不能用纯静音：解码器可能走短路，那样就白热了。用一段很轻的正弦波，
+    保证完整的推理路径真的被跑过一遍 —— 首次推理要编译 Metal 计算核，
+    那笔开销必须提前付掉，不能落在用户的第一句话上。
+    """
+    frames = int(seconds * sample_rate)
+    pcm = b"".join(
+        struct.pack("<h", int(600 * math.sin(2 * math.pi * 220 * i / sample_rate)))
+        for i in range(frames)
+    )
+    header = (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(pcm))
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
+        + b"data"
+        + struct.pack("<I", len(pcm))
+    )
+    return header + pcm

@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -106,6 +107,8 @@ class Transcriber:
         # 实际执行推理的线程名。所有调用都必须落在同一个线程上 ——
         # 这个字段让这件事可观测、可测试，而不是靠约定。
         self.worker_thread: str | None = None
+        # 上次预热的时刻。闲置太久要重新热一次。
+        self.warmed_at: float = 0.0
 
     # ---------------------------------------------------------- 只在专用线程上跑
 
@@ -121,6 +124,7 @@ class Transcriber:
 
     def _run(self, audio_path: str, context: str) -> ASRResult:
         self.worker_thread = threading.current_thread().name
+        self.warmed_at = time.monotonic()
 
         if self._mock:
             return ASRResult(
@@ -155,8 +159,51 @@ class Transcriber:
     # ---------------------------------------------------------- 对外接口
 
     def warmup(self) -> None:
-        """在服务启动时预热，避免第一次听写卡住好几秒。"""
-        self._executor.submit(self._ensure_loaded).result()
+        """预热：加载模型 **并且真的跑一次推理**。
+
+        只加载权重是不够的 —— MLX 的 Metal 计算核是首次推理时才编译的，
+        不提前跑一遍，那笔开销就会落在用户的第一句话上。用户的原话是
+        「第一次开始的时候非常慢，第二次才好一点」，说的就是这个。
+        """
+        self._executor.submit(self._warmup_now).result()
+
+    def _warmup_now(self) -> None:
+        import tempfile
+        from pathlib import Path as _Path
+
+        from .audio import warmup_wav
+
+        self._ensure_loaded()
+        if self._mock:
+            return
+
+        tmp = ""
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+                handle.write(warmup_wav())
+                tmp = handle.name
+            self._run(tmp, "")
+            self.warmed_at = time.monotonic()
+            log.info("预热完成（计算核已编译）")
+        except Exception as exc:  # 预热失败不该拦住服务启动
+            log.warning("预热失败，第一次听写可能偏慢：%s", exc)
+        finally:
+            if tmp:
+                _Path(tmp).unlink(missing_ok=True)
+
+    def warmup_if_stale(self, max_age_seconds: float = 120.0) -> bool:
+        """久没推理就再热一次。
+
+        闲置一段时间后系统可能把相关资源换出去，下一次推理又会变慢。
+        录音一开始就调这个 —— 那时离真正的转写请求还有约 0.8 秒，
+        足够热完，又不用在后台一直空转烧电。
+        """
+        if self._mock:
+            return False
+        if time.monotonic() - self.warmed_at < max_age_seconds:
+            return False
+        self._executor.submit(self._warmup_now)
+        return True
 
     def transcribe(self, audio_path: str, *, context: str = "") -> ASRResult:
         """同步调用（自检脚本用）。仍然走那个专用线程。"""

@@ -112,6 +112,17 @@ def health() -> dict:
     }
 
 
+@app.post("/warmup")
+async def warmup() -> dict:
+    """录音一开始就调这个，把 Metal 计算核的编译开销提前付掉。
+
+    此时离真正的转写请求还有约 0.8 秒，足够热完；比在后台一直空转
+    烧电要划算。已经热过就直接返回，不重复跑。
+    """
+    triggered = transcriber.warmup_if_stale()
+    return {"warming": triggered}
+
+
 @app.post("/transcribe")
 async def transcribe(
     audio: UploadFile = File(...),

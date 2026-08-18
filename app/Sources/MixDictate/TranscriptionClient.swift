@@ -43,6 +43,14 @@ enum TranscriptionError: LocalizedError {
 struct TranscriptionClient {
     let config: Config
 
+    /// 提前把模型热起来。失败无所谓 —— 这只是优化，不是必需步骤。
+    func warmup() async {
+        var request = URLRequest(url: config.warmupURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     func transcribe(wav: Data, partial: Bool = false) async throws -> String {
         let boundary = "mixdictate.\(UUID().uuidString)"
 

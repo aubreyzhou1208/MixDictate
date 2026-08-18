@@ -146,8 +146,9 @@ final class AudioRecorder {
     /// 代替 —— 转写要花时间，那期间用户还在说，长度早变了，
     /// 用新长度定稿会把没转过的音频一起标记成已完成，直接丢字。
     enum Boundary {
-        /// 说话人真的停顿了。这种地方多半是句子或分句的结束。
-        case pause
+        /// 说话人停顿了。带上停顿时长 —— 停多久很关键：
+        /// 停一秒多可能只是在想词，停两秒多才多半是真说完了一句。
+        case pause(seconds: Double)
         /// 一直不停顿，按长度硬切。**一定切在句子中间。**
         case lengthCap
     }
@@ -169,7 +170,7 @@ final class AudioRecorder {
         // 一定在句子中间 —— 后者不能保留模型补出来的句号。
         let boundary: Boundary?
         if silenceBytes >= Self.pauseBytes && pending.count >= Self.minSegmentBytes {
-            boundary = .pause
+            boundary = .pause(seconds: Double(silenceBytes) / 2.0 / 16_000.0)
         } else if pending.count >= Self.maxSegmentBytes {
             boundary = .lengthCap
         } else {

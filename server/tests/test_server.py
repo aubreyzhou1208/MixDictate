@@ -185,3 +185,19 @@ def test_concurrent_requests_are_serialised(client):
 
     assert all(r.status_code == 200 for r in responses)
     assert all(r.json()["text"] == "并发测试" for r in responses)
+
+
+# ------------------------------------------------------------ 预热
+
+def test_warmup_endpoint_exists(client):
+    """录音一开始就调它，把 Metal 计算核的编译开销提前付掉 ——
+    否则那笔开销会落在用户的第一句话上。"""
+    response = client.post("/warmup")
+    assert response.status_code == 200
+    assert "warming" in response.json()
+
+
+def test_warmup_is_a_no_op_right_after_inference(client):
+    # 刚推理过就不必再热，重复热只是白烧电
+    _transcribe(client, "刚刚说过话")
+    assert client.post("/warmup").json()["warming"] is False

@@ -64,3 +64,24 @@ def test_summary_mentions_the_useful_numbers():
     assert "1ch" in summary
     assert "16bit" in summary
     assert "峰值" in summary
+
+
+# ------------------------------------------------------------ 预热音频
+
+def test_warmup_audio_is_a_valid_wav():
+    from mixdictate_server.audio import warmup_wav
+
+    info = inspect_wav(warmup_wav())
+    assert info is not None
+    assert info.sample_rate == 16000
+    assert info.channels == 1
+
+
+def test_warmup_audio_is_not_silence():
+    """纯静音可能被解码器短路，那样就白热了 ——
+    预热的意义就是让完整的推理路径真的跑一遍。"""
+    from mixdictate_server.audio import warmup_wav
+
+    info = inspect_wav(warmup_wav())
+    assert info is not None
+    assert info.peak > 0.005

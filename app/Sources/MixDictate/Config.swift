@@ -82,6 +82,7 @@ struct Config {
 
     var transcribeURL: URL { baseURL.appendingPathComponent("transcribe") }
     var healthURL: URL { baseURL.appendingPathComponent("health") }
+    var warmupURL: URL { baseURL.appendingPathComponent("warmup") }
 }
 
 // 手写解码而不是用合成的：合成的 init(from:) 要求 JSON 里每个键都存在，

@@ -303,6 +303,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingEnd = 0
             liveInserter.reset()
             state = .recording
+            // 按下的这一刻离真正的转写请求还有约 0.8 秒，正好用来把
+            // Metal 计算核的编译开销提前付掉 —— 否则它会落在你的第一句话上。
+            let client = TranscriptionClient(config: config)
+            Task { await client.warmup() }
+
             if config.showLiveOverlay {
                 // 实时写入时只给一个小指示器：文字已经在光标处了，浮层
                 // 再显示一遍是噪音；但完全不显示又会让人不确定它在不在工作。
@@ -407,12 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let boundary = snapshot.boundary {
                 // 这一段就此定稿 —— 之后不会再转写它。这是长录音不再越来越慢
                 // 的关键：开销只跟"最后一段"有关，跟总时长无关。
-                //
-                // 按长度硬切的段落一定断在句子中间，模型却会给它补一个句号。
-                // 直接拼下去会出现「这个方案。确实不错」这种断句。
-                committedText += boundary == .lengthCap
-                    ? Self.strippingSentenceEnd(text)
-                    : text
+                committedText += Self.joinable(text, at: boundary)
                 pendingText = ""
                 recorder.commit(upTo: snapshot.endOffset)
             }
@@ -498,8 +498,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 去掉句末标点。段落是按长度硬切出来的时候用 ——
-    /// 那种切口在句子中间，模型补的句号是错的。
+    /// 一段定稿文字要不要保留它的句末标点。
+    ///
+    /// 模型是按段推理的：不管你说没说完，它都会给这一段补一个句号。
+    /// 而段落边界是**我们**切的，不是说话人断的句 —— 照单全收就会出现
+    /// 满篇多余的句号，用户的原话是「老是会自己加进去一个句号」。
+    ///
+    /// 判据是停顿时长：停两秒以上多半真的说完了一句，保留；停一秒多
+    /// 通常只是在想词，去掉。按长度硬切的一律去掉，那种切口必在句中。
+    private static func joinable(_ text: String, at boundary: AudioRecorder.Boundary) -> String {
+        switch boundary {
+        case .pause(let seconds) where seconds >= 2.0:
+            return text
+        default:
+            return strippingSentenceEnd(text)
+        }
+    }
+
     private static func strippingSentenceEnd(_ text: String) -> String {
         var result = text
         while let last = result.last, "。！？，、.!?,".contains(last) {
