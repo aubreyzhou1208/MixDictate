@@ -155,6 +155,22 @@ struct SettingsView: View {
                     Text("边放视频边听写时必开，否则视频里的人声会被当成你说的话。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    HStack {
+                        Text("人声门限")
+                        Slider(value: $model.config.voiceThreshold, in: 0...0.3)
+                        Text(String(format: "%.2f", model.config.voiceThreshold))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                    Text("低于门限的声音直接丢掉，不送去转写。外放的视频漏进麦克风时\n"
+                         + "通常比你说话弱一个数量级，这一刀就能挡住大部分。\n"
+                         + "调大更能挡外放，调小小声说话也收得到，0 = 关掉。\n"
+                         + "想彻底隔绝请戴耳机 —— 声音根本不进麦克风才是真的隔绝。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(6)
             }

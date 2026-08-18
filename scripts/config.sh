@@ -20,6 +20,8 @@ usage() {
 
 常用字段：
   echoCancellation    true / false   回声消除，不录进电脑自己放的声音（边放视频边听写时必开）
+  voiceThreshold      0…1            人声门限，低于它的声音直接丢掉（默认 0.05，0=关）
+                                     外放还是被转进来就调大，小声说话被吞掉就调小
   rawOutput           true / false   只要模型原文，不做任何加工（排查"输出很怪"用）
   liveInsertion       true / false   边说边写进输入框（不用等松手，也没有粘贴那一步）
   showLiveOverlay     true / false   录音时显示浮层

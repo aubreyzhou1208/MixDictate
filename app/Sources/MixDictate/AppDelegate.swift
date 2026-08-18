@@ -296,6 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard state == .idle || state == .failed else { return }
         do {
+            recorder.voiceThreshold = Float(max(0, min(1, config.voiceThreshold)))
             try recorder.start(cancelEcho: config.echoCancellation)
             silentTicks = 0
             committedText = ""
@@ -506,9 +507,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func reportEmptyResult() {
-        let reason = recorder.heardSound
-            ? "没识别出内容"
-            : "没有听到声音，检查一下麦克风权限"
+        let reason: String
+        if !recorder.heardSound {
+            reason = "没有听到声音，检查一下麦克风权限"
+        } else if config.voiceThreshold > 0,
+                  Double(recorder.loudestLevel) < config.voiceThreshold {
+            // 麦克风有信号，但全程没越过人声门限，整段都被当成环境音挡掉了。
+            // 不说清楚的话，这跟「模型没听懂」看起来一模一样，
+            // 而这两件事的解法完全相反。
+            reason = String(
+                format: "声音都低于人声门限（最大 %.2f，门限 %.2f），去设置里调低",
+                recorder.loudestLevel, config.voiceThreshold
+            )
+        } else {
+            reason = "没识别出内容"
+        }
         overlay.setStatus(reason)
         overlay.update(reason, isFinal: true)
         overlay.hide(after: 1.6)

@@ -39,6 +39,28 @@ final class AudioRecorder {
     /// 就是当前的静音时长，够长就说明可以在这里切一刀。
     private var lastLoudByte = 0
 
+    /// 人声门限（0…1）。低于它的声音一律写成静音，不进入转写。设成 0 关闭。
+    ///
+    /// 这是回声消除之外的第二道闸。回声消除减掉的是「电脑正在往扬声器送的
+    /// 那一路信号」，减不干净，而且它完全不做人声分离 —— 从扬声器漏回麦克风
+    /// 的说话声，在模型眼里跟你说话没有任何区别。但两者有个很稳定的差别：
+    /// 你的嘴离麦克风二三十厘米，视频的声音要绕一圈才回来，通常弱一个数量级。
+    /// 按响度切一刀，就能把绝大部分漏音挡在外面。
+    var voiceThreshold: Float = 0.05
+
+    /// 门限打开后的剩余保持字节数
+    private var holdRemaining = 0
+    /// 压在手里还没写出去的那一块，以及当时的判断。见 appendGated 里的前瞻。
+    private var heldChunk: Data?
+    private var heldOpen = false
+    private var heldLoud = false
+
+    /// 本次录音听到过的最大响度。跟 peak 不同，它不会被读取清零 ——
+    /// 「什么都没识别出来」到底是没声音还是全被门限挡掉了，全靠它区分。
+    private var loudest: Float = 0
+    /// 被门限写成静音的字节数
+    private var gatedBytes = 0
+
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
@@ -76,6 +98,12 @@ final class AudioRecorder {
         sawSound = false
         committedOffset = 0
         lastLoudByte = 0
+        holdRemaining = 0
+        heldChunk = nil
+        heldOpen = false
+        heldLoud = false
+        loudest = 0
+        gatedBytes = 0
         pcmLock.unlock()
 
         let input = engine.inputNode
@@ -114,6 +142,7 @@ final class AudioRecorder {
         startedAt = nil
 
         pcmLock.lock()
+        flushHeld()
         let captured = pcm
         pcmLock.unlock()
 
@@ -166,6 +195,21 @@ final class AudioRecorder {
         return sawSound
     }
 
+    /// 本次录音听到的最大响度（0…1）。跟人声门限一比就知道
+    /// 「没识别出内容」是真没声音，还是声音全在门限以下被挡掉了。
+    var loudestLevel: Float {
+        pcmLock.lock()
+        defer { pcmLock.unlock() }
+        return loudest
+    }
+
+    /// 被人声门限写成静音的时长（秒）
+    var gatedSeconds: Double {
+        pcmLock.lock()
+        defer { pcmLock.unlock() }
+        return Double(gatedBytes) / 2.0 / 16_000.0
+    }
+
     /// 读取并清零峰值音量（0…1）。给浮层做实时提示用。
     func consumePeakLevel() -> Float {
         pcmLock.lock()
@@ -193,10 +237,18 @@ final class AudioRecorder {
         let pending = pcm.subdata(in: committedOffset..<pcm.count)
         let endOffset = pcm.count
         let silenceBytes = pcm.count - lastLoudByte
+        // 这一段里一次都没越过人声门限 = 这段时间没人在说话
+        let silentThroughout = lastLoudByte <= committedOffset
+        if silentThroughout, pending.count >= Self.minSegmentBytes {
+            // 直接定稿掉。纯静音送进模型不是没输出就是幻听，而不定稿的话
+            // 未转写的部分会一直涨，后面每次刷新都越来越慢。
+            committedOffset = endOffset
+        }
         pcmLock.unlock()
 
         // 太短的片段模型只会输出噪音，不如不发
         guard pending.count >= 16_000 else { return nil }  // 约 0.5 秒
+        guard !silentThroughout else { return nil }
 
         // 末尾静音够长 = 说话人停顿了，可以在这里切一刀。
         // 切在停顿处而不是随便切，是为了不把一个词劈成两半。
@@ -236,6 +288,13 @@ final class AudioRecorder {
     /// 段落上限 8 秒。到了就强制切，保证单次推理耗时有天花板。
     private static let maxSegmentBytes = Int(8.0 * 16_000) * 2
 
+    /// 判断「麦克风到底有没有在工作」的下限。跟人声门限是两回事：
+    /// 这个只回答有没有信号，那个回答这信号是不是你在说话。
+    private static let noiseFloor: Float = 0.01
+    /// 门限开了之后至少保持 0.4 秒。说话本身字与字之间就有停顿，
+    /// 只按瞬时响度开合会把句子剁碎，听上去像在吞字。
+    private static let gateHoldBytes = Int(0.4 * 16_000) * 2
+
     // MARK: - 重采样
 
     private func append(_ buffer: AVAudioPCMBuffer) {
@@ -266,24 +325,79 @@ final class AudioRecorder {
         else { return }
 
         let frames = Int(out.frameLength)
-        var framePeak: Int16 = 0
+        // 用 magnitude 而不是 abs：Int16.min 没有对应的正数，abs 会直接 trap，
+        // 而满量程的负样本在录音里是真会出现的。
+        var framePeak: UInt16 = 0
         for index in 0..<frames {
-            let sample = abs(channel[0][index])
+            let sample = channel[0][index].magnitude
             if sample > framePeak { framePeak = sample }
         }
 
         let byteCount = frames * MemoryLayout<Int16>.size
+        let chunk = channel[0].withMemoryRebound(to: UInt8.self, capacity: byteCount) {
+            Data(bytes: $0, count: byteCount)
+        }
+        let level = min(1, Float(framePeak) / Float(Int16.max))
+
         pcmLock.lock()
-        channel[0].withMemoryRebound(to: UInt8.self, capacity: byteCount) { bytes in
-            pcm.append(bytes, count: byteCount)
-        }
-        let level = Float(framePeak) / Float(Int16.max)
         peak = max(peak, level)
-        if level > 0.01 {
-            sawSound = true
-            lastLoudByte = pcm.count
-        }
+        loudest = max(loudest, level)
+        if level > Self.noiseFloor { sawSound = true }
+        appendGated(chunk, level: level)
         pcmLock.unlock()
+    }
+
+    // MARK: - 人声门限
+
+    /// 把一块音频写进缓冲区，低于人声门限的部分换成静音。
+    ///
+    /// 门限带保持时间，还带一块的前瞻：只按瞬时响度开合，词头的起音和
+    /// 词尾的余音都会被削掉。前瞻的做法是每块都先压在手里，等下一块到了
+    /// 再决定放不放行 —— 下一块开门就说明起音落在了这一块的末尾。
+    /// 代价是恒定延后一块（约 0.1 秒），松手时 flushHeld() 补上。
+    ///
+    /// 必须持有 pcmLock。
+    private func appendGated(_ chunk: Data, level: Float) {
+        guard voiceThreshold > 0 else {
+            write(chunk, open: true, loud: level > Self.noiseFloor)
+            return
+        }
+
+        let loud = level >= voiceThreshold
+        if loud {
+            holdRemaining = Self.gateHoldBytes
+        } else {
+            holdRemaining = max(0, holdRemaining - chunk.count)
+        }
+        let openNow = loud || holdRemaining > 0
+
+        if let held = heldChunk {
+            write(held, open: heldOpen || loud, loud: heldLoud)
+        }
+        heldChunk = chunk
+        heldOpen = openNow
+        heldLoud = loud
+    }
+
+    /// 必须持有 pcmLock。
+    private func write(_ chunk: Data, open: Bool, loud: Bool) {
+        if open {
+            pcm.append(chunk)
+        } else {
+            pcm.append(Data(count: chunk.count))
+            gatedBytes += chunk.count
+        }
+        if loud { lastLoudByte = pcm.count }
+    }
+
+    /// 把还压在手里的那一块写出去。停止录音时必须调用，
+    /// 否则最后约 0.1 秒会丢 —— 正好是最后一个字的尾音。
+    ///
+    /// 必须持有 pcmLock。
+    private func flushHeld() {
+        guard let held = heldChunk else { return }
+        heldChunk = nil
+        write(held, open: heldOpen, loud: heldLoud)
     }
 
     // MARK: - WAV 封装

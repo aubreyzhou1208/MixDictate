@@ -19,6 +19,17 @@ struct Config {
     /// 边放视频边听写时尤其重要。顺带还有降噪和自动增益。
     var echoCancellation: Bool = true
 
+    /// 人声门限（0…1）：低于它的声音一律当环境音丢掉，不进入转写。
+    ///
+    /// 回声消除只能减掉电脑自己正在播的那一路信号，减不干净，而且它
+    /// 不做人声分离 —— 扬声器漏回麦克风的说话声，模型听起来跟你说话
+    /// 一模一样。挡住它靠的是距离带来的响度差：你的嘴离麦克风很近，
+    /// 视频的声音绕了一圈才回来。
+    ///
+    /// 调大 = 更能挡住外放；调小 = 小声说话也收得到。0 = 关掉。
+    /// 想彻底隔绝还是戴耳机 —— 声音根本不进麦克风，才是真的隔绝。
+    var voiceThreshold: Double = 0.05
+
     /// 只要模型原文，不做任何加工。
     ///
     /// 打开这个等于把下面所有开关一次性关掉：去语气词、去重复、
@@ -124,6 +135,8 @@ extension Config: Codable {
             ?? fallback.fullwidthPunctuation
         echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation)
             ?? fallback.echoCancellation
+        voiceThreshold = try c.decodeIfPresent(Double.self, forKey: .voiceThreshold)
+            ?? fallback.voiceThreshold
         rawOutput = try c.decodeIfPresent(Bool.self, forKey: .rawOutput)
             ?? fallback.rawOutput
         collapseRepeats = try c.decodeIfPresent(Bool.self, forKey: .collapseRepeats)
