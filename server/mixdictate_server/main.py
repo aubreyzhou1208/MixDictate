@@ -117,6 +117,8 @@ async def transcribe(
     audio: UploadFile = File(...),
     strip_fillers: bool = Form(True),
     fullwidth_punct: bool = Form(True),
+    spoken_numbers: bool = Form(True),
+    spoken_symbols: bool = Form(True),
     partial: bool = Form(False),
 ) -> JSONResponse:
     started = time.monotonic()
@@ -155,7 +157,9 @@ async def transcribe(
 
         # 结果为空时，先怀疑是热词偏置把解码带跑偏了 —— 去掉 context 再试一次。
         # 这既是自动修复，也是诊断：日志会说清楚是哪一种情况。
-        if not result.text.strip() and table.context():
+        # 只对最终结果重试。中间结果重试会让单次耗时翻倍，
+        # 而实时反馈最怕的就是慢。
+        if not partial and not result.text.strip() and table.context():
             log.warning("带热词偏置的结果为空，去掉 context 重试")
             retry = await transcriber.transcribe_async(tmp_path, context="")
             if retry.text.strip():
@@ -176,6 +180,8 @@ async def transcribe(
         text,
         strip_filler_words=strip_fillers,
         fullwidth_punctuation=fullwidth_punct,
+        spoken_numbers=spoken_numbers,
+        spoken_symbols=spoken_symbols,
     )
 
     elapsed = time.monotonic() - started

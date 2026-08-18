@@ -13,15 +13,21 @@ struct Config {
     /// 中文标点转全角。写代码时可能更想要半角，所以留成开关。
     var fullwidthPunctuation: Bool = true
 
+    /// 口语数字还原成阿拉伯数字：「三点一四」→「3.14」
+    var spokenNumbers: Bool = true
+
+    /// 口语符号还原成符号：「艾特 gmail 点 com」→「@gmail.com」
+    var spokenSymbols: Bool = true
+
     /// 短于这个时长的录音直接丢弃 —— 多半是误触
     var minimumDurationSeconds: Double = 0.3
 
     /// 录音时在屏幕上显示实时转写结果
     var showLiveOverlay: Bool = true
 
-    /// 实时结果的刷新间隔。太短会让模型一直在跑上一段音频，
-    /// 反而拖慢松手后的最终结果。
-    var partialIntervalSeconds: Double = 1.2
+    /// 实时结果的刷新间隔下限。段落长度已经封顶，单次推理耗时有天花板，
+    /// 所以可以刷得比以前勤。
+    var partialIntervalSeconds: Double = 0.8
 
     /// 边说边把文字直接写进输入框，不用浮层也不用等松手。
     /// 代价见设置界面里的说明 —— 默认关闭。
@@ -90,6 +96,10 @@ extension Config: Codable {
             ?? fallback.stripFillers
         fullwidthPunctuation = try c.decodeIfPresent(Bool.self, forKey: .fullwidthPunctuation)
             ?? fallback.fullwidthPunctuation
+        spokenNumbers = try c.decodeIfPresent(Bool.self, forKey: .spokenNumbers)
+            ?? fallback.spokenNumbers
+        spokenSymbols = try c.decodeIfPresent(Bool.self, forKey: .spokenSymbols)
+            ?? fallback.spokenSymbols
         minimumDurationSeconds = try c.decodeIfPresent(Double.self, forKey: .minimumDurationSeconds)
             ?? fallback.minimumDurationSeconds
         showLiveOverlay = try c.decodeIfPresent(Bool.self, forKey: .showLiveOverlay)

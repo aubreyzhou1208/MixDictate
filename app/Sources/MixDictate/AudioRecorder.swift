@@ -102,6 +102,14 @@ final class AudioRecorder {
         return Self.makeWAV(pcm: tail, sampleRate: 16_000, channels: 1)
     }
 
+    /// 未定稿那一段的时长（秒）。刷新间隔按它算，而不是按总时长 ——
+    /// 单次推理的开销只跟这一段有关。
+    var pendingSeconds: Double {
+        pcmLock.lock()
+        defer { pcmLock.unlock() }
+        return Double(pcm.count - committedOffset) / 2.0 / 16_000.0
+    }
+
     /// 目前已录到的字节数。用来判断转写完成后音频有没有继续增长。
     var capturedBytes: Int {
         pcmLock.lock()
@@ -149,7 +157,12 @@ final class AudioRecorder {
 
         // 末尾静音够长 = 说话人停顿了，可以在这里切一刀。
         // 切在停顿处而不是随便切，是为了不把一个词劈成两半。
-        let atPause = silenceBytes >= Self.pauseBytes && pending.count >= Self.minSegmentBytes
+        // 一直不停顿的话段落会越长越慢，所以也按长度强制切一刀。
+        // 可能切在词中间，但比让延迟无上限地涨上去强 —— 后者是用户
+        // 说"超过三十秒就非常慢"的直接原因。
+        let atPause =
+            (silenceBytes >= Self.pauseBytes && pending.count >= Self.minSegmentBytes)
+            || pending.count >= Self.maxSegmentBytes
 
         return (
             Self.makeWAV(pcm: pending, sampleRate: 16_000, channels: 1),
@@ -169,6 +182,8 @@ final class AudioRecorder {
     private static let pauseBytes = Int(0.6 * 16_000) * 2
     /// 段落至少要有 1.5 秒，否则切得太碎反而拖慢
     private static let minSegmentBytes = Int(1.5 * 16_000) * 2
+    /// 段落上限 8 秒。到了就强制切，保证单次推理耗时有天花板。
+    private static let maxSegmentBytes = Int(8.0 * 16_000) * 2
 
     // MARK: - 重采样
 

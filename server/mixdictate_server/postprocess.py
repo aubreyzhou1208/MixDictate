@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 
+from .numbers import convert_numbers, convert_symbols
+
 # ---------------------------------------------------------------- 字符类
 
 # CJK 统一表意文字 + 中文标点。不含日文假名，避免误伤。
@@ -156,6 +158,8 @@ def postprocess(
     *,
     strip_filler_words: bool = True,
     fullwidth_punctuation: bool = True,
+    spoken_numbers: bool = True,
+    spoken_symbols: bool = True,
 ) -> str:
     """完整后处理链。热词纠正在 hotwords.py 里，由调用方插在中间。
 
@@ -166,6 +170,15 @@ def postprocess(
         return ""
     if strip_filler_words:
         text = strip_fillers(text)
+
+    # 数字要在符号之前：「三点一四」里的「点」是小数点，
+    # 「gmail 点 com」里的才是符号。两条规则的判定条件不冲突，
+    # 但先转数字能让后面少一层歧义。
+    if spoken_numbers:
+        text = convert_numbers(text)
+    if spoken_symbols:
+        text = convert_symbols(text)
+
     text = fix_spacing(text)
     if fullwidth_punctuation:
         text = to_fullwidth_punct(text)

@@ -91,6 +91,14 @@ struct TranscriptionClient {
         line("\(config.fullwidthPunctuation)\r\n")
 
         line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"spoken_numbers\"\r\n\r\n")
+        line("\(config.spokenNumbers)\r\n")
+
+        line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"spoken_symbols\"\r\n\r\n")
+        line("\(config.spokenSymbols)\r\n")
+
+        line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"partial\"\r\n\r\n")
         line("\(partial)\r\n")
 

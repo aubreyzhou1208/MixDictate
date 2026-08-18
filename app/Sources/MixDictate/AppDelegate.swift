@@ -303,7 +303,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingEnd = 0
             liveInserter.reset()
             state = .recording
-            if config.showLiveOverlay {
+            // 实时写入时浮层是多余的：字已经出现在光标处了，
+            // 再在屏幕底下显示一遍只是噪音
+            if config.showLiveOverlay && !config.liveInsertion {
                 overlay.show(placeholder: "听着呢…")
             }
             // 实时写入也要靠中间结果，即使浮层关着
@@ -348,11 +350,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 的 4.5 倍，GPU 全被中间请求占着，松手后的结果反而要排队。
     /// 让间隔跟着已录时长增长，把额外开销压在可控范围内。
     private func nextPartialDelay() -> TimeInterval {
-        // 上一版写的是 max(基础间隔, 已录时长 × 0.5)，调过头了 ——
-        // 说到 10 秒时下一次刷新要等 5 秒，用起来像卡住了。
-        // 现在增长更缓，并且封顶，保证最慢也是 2.5 秒刷一次。
-        let scaled = recorder.capturedSeconds * 0.25
-        return min(2.5, max(config.partialIntervalSeconds, scaled))
+        // 按**未定稿段落**的长度算，不是总时长 —— 单次推理的开销只跟
+        // 这一段有关，而段落长度已经封顶（8 秒），所以间隔也能封得更低。
+        let scaled = recorder.pendingSeconds * 0.3
+        return min(1.5, max(config.partialIntervalSeconds, scaled))
     }
 
     private func stopPartialUpdates() {

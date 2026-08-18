@@ -154,6 +154,8 @@ struct SettingsView: View {
                     Toggle("录音时在屏幕上显示实时结果", isOn: $model.config.showLiveOverlay)
                     Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
                     Toggle("中文标点转全角（，。？！）", isOn: $model.config.fullwidthPunctuation)
+                    Toggle("口语数字转阿拉伯数字（三点一四 → 3.14）", isOn: $model.config.spokenNumbers)
+                    Toggle("口语符号转符号（艾特 gmail 点 com → @gmail.com）", isOn: $model.config.spokenSymbols)
                     Text("关掉全角后标点保持半角，写代码时更顺手。")
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -145,3 +145,27 @@ def test_fullwidth_punctuation_can_be_disabled():
 
 def test_filler_stripping_can_be_disabled():
     assert postprocess("嗯我知道", strip_filler_words=False) == "嗯我知道"
+
+
+# ------------------------------------------------------------ 数字与符号
+
+def test_spoken_decimal_through_full_chain():
+    assert postprocess("圆周率大概是三点一四一五九") == "圆周率大概是 3.14159"
+
+
+def test_spoken_email_through_full_chain():
+    assert postprocess("发到 zhou 艾特 gmail 点 com") == "发到 zhou@gmail.com"
+
+
+def test_number_conversion_can_be_disabled():
+    assert postprocess("三点一四", spoken_numbers=False) == "三点一四"
+
+
+def test_symbol_conversion_can_be_disabled():
+    assert postprocess("A 杠 B", spoken_symbols=False) == "A 杠 B"
+
+
+def test_idioms_survive_the_full_chain():
+    # 整条链跑下来也不能把固定搭配拆成数字
+    assert postprocess("十分感谢你的帮助") == "十分感谢你的帮助"
+    assert postprocess("我们一起走吧") == "我们一起走吧"
