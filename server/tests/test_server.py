@@ -125,3 +125,50 @@ def test_fullwidth_punct_flag_reaches_postprocess(client):
         data={"strip_fillers": "true", "fullwidth_punct": "false"},
     )
     assert response.json()["text"] == "这个 schema 要改吗?"
+
+
+# ------------------------------------------------------------ 边说边转写
+
+def test_partial_results_are_not_logged(client, tmp_path, monkeypatch):
+    """中间结果不能进转写记录 —— 一次听写十几条会把最终结果淹掉。"""
+    from mixdictate_server import paths
+
+    monkeypatch.setenv("MIXDICTATE_HOME", str(tmp_path))
+    os.environ["MIXDICTATE_MOCK_TEXT"] = "这是中间结果"
+
+    response = client.post(
+        "/transcribe",
+        files={"audio": ("speech.wav", _wav(), "audio/wav")},
+        data={"partial": "true"},
+    )
+    assert response.status_code == 200
+    assert response.json()["partial"] is True
+    assert response.json()["text"] == "这是中间结果"
+
+    log_file = paths.log_dir() / "transcripts.log"
+    assert not log_file.exists() or "这是中间结果" not in log_file.read_text(encoding="utf-8")
+
+
+def test_final_result_defaults_to_not_partial(client):
+    body = _transcribe(client, "最终结果")
+    assert body["partial"] is False
+
+
+def test_concurrent_requests_are_serialised(client):
+    """并发打进来不能炸 —— 模型不是线程安全的，服务端要串行处理。"""
+    import concurrent.futures
+
+    os.environ["MIXDICTATE_MOCK_TEXT"] = "并发测试"
+
+    def call():
+        return client.post(
+            "/transcribe",
+            files={"audio": ("speech.wav", _wav(), "audio/wav")},
+            data={"partial": "true"},
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        responses = [f.result() for f in [pool.submit(call) for _ in range(6)]]
+
+    assert all(r.status_code == 200 for r in responses)
+    assert all(r.json()["text"] == "并发测试" for r in responses)

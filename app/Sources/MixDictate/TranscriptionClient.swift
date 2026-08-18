@@ -43,7 +43,7 @@ enum TranscriptionError: LocalizedError {
 struct TranscriptionClient {
     let config: Config
 
-    func transcribe(wav: Data) async throws -> String {
+    func transcribe(wav: Data, partial: Bool = false) async throws -> String {
         let boundary = "mixdictate.\(UUID().uuidString)"
 
         var request = URLRequest(url: config.transcribeURL)
@@ -53,7 +53,7 @@ struct TranscriptionClient {
             "multipart/form-data; boundary=\(boundary)",
             forHTTPHeaderField: "Content-Type"
         )
-        request.httpBody = body(wav: wav, boundary: boundary)
+        request.httpBody = body(wav: wav, boundary: boundary, partial: partial)
 
         let data: Data
         do {
@@ -69,7 +69,7 @@ struct TranscriptionClient {
         return decoded.text
     }
 
-    private func body(wav: Data, boundary: String) -> Data {
+    private func body(wav: Data, boundary: String, partial: Bool) -> Data {
         var body = Data()
 
         func line(_ string: String) {
@@ -89,6 +89,10 @@ struct TranscriptionClient {
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"fullwidth_punct\"\r\n\r\n")
         line("\(config.fullwidthPunctuation)\r\n")
+
+        line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"partial\"\r\n\r\n")
+        line("\(partial)\r\n")
 
         line("--\(boundary)--\r\n")
         return body

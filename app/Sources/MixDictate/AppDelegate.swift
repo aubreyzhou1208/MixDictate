@@ -9,6 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = Config.load()
     private var server: ServerProcess!
     private let settingsWindow = SettingsWindowController()
+    private let overlay = OverlayWindow()
+    private var partialTimer: Timer?
+    /// 同一时刻只允许一个中间请求在飞。模型是串行的，堆积请求
+    /// 只会让松手后的最终结果排在后面等更久。
+    private var partialInFlight = false
     private var lastError: String?
 
     private enum State {
@@ -65,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor?.stop()
+        stopPartialUpdates()
         server?.stop()
     }
 
@@ -120,35 +126,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             state = .recording
+            if config.showLiveOverlay {
+                overlay.show(placeholder: "听着呢…")
+                startPartialUpdates()
+            }
         } catch {
             fail("麦克风打不开：\(error.localizedDescription)")
         }
     }
 
+    // MARK: - 边说边转写
+
+    /// 录音过程中定期把"到目前为止"的音频拿去转一遍，显示在浮层上。
+    /// 每次都从头转整段而不是增量拼接 —— 模型是整段推理的，
+    /// 分段拼接会在切口处丢字，中英混说时尤其明显。
+    private func startPartialUpdates() {
+        partialTimer?.invalidate()
+        partialTimer = Timer.scheduledTimer(
+            withTimeInterval: config.partialIntervalSeconds,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.requestPartial() }
+        }
+    }
+
+    private func stopPartialUpdates() {
+        partialTimer?.invalidate()
+        partialTimer = nil
+    }
+
+    private func requestPartial() {
+        guard state == .recording, !partialInFlight else { return }
+        guard let wav = recorder.snapshotWAV() else { return }
+
+        partialInFlight = true
+        let client = TranscriptionClient(config: config)
+
+        Task { @MainActor in
+            defer { partialInFlight = false }
+            guard let text = try? await client.transcribe(wav: wav, partial: true) else { return }
+            // 请求飞在路上时用户可能已经松手了，这时别再盖掉最终结果
+            guard state == .recording else { return }
+            overlay.update(text, isFinal: false)
+        }
+    }
+
     private func endRecording() {
         guard state == .recording else { return }
+        stopPartialUpdates()
 
         guard let wav = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
             // 按得太短或没录到声音，静默回到待命，不打扰用户
             state = .idle
+            overlay.hide()
             return
         }
 
         state = .transcribing
+        overlay.update("整理中…", isFinal: false)
         let client = TranscriptionClient(config: config)
 
         Task { @MainActor in
             do {
                 let text = try await client.transcribe(wav: wav)
-                if text.isEmpty {
+                guard !text.isEmpty else {
                     state = .idle
-                } else {
-                    TextInjector.insert(text)
-                    state = .idle
+                    overlay.hide()
+                    return
                 }
+
+                // 先把最终结果显示出来，用户能看到它跟中间结果差在哪
+                overlay.update(text, isFinal: true)
+
+                if TextInjector.insert(text) {
+                    overlay.hide(after: 1.2)
+                } else {
+                    // 没有辅助功能权限时系统会静默丢掉合成的按键 ——
+                    // 必须明确告诉用户，否则表现就是"按了没反应"
+                    overlay.hide()
+                    reportAccessibilityMissing()
+                }
+                state = .idle
             } catch {
+                overlay.hide()
                 fail(error.localizedDescription)
             }
+        }
+    }
+
+    /// 缺辅助功能权限是"按了没反应"最常见的原因。给一个能直接跳到
+    /// 设置页的弹窗，别让用户自己在系统设置里翻。
+    private func reportAccessibilityMissing() {
+        let alert = NSAlert()
+        alert.messageText = "需要「辅助功能」权限才能自动输入"
+        alert.informativeText = "文字已经复制到剪贴板，可以直接按 Cmd+V 粘贴。\n\n"
+            + "要让 MixDictate 自动输入，请到\n"
+            + "系统设置 › 隐私与安全性 › 辅助功能\n"
+            + "里把 MixDictate 打开。"
+        alert.addButton(withTitle: "打开设置")
+        alert.addButton(withTitle: "稍后")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            TextInjector.openAccessibilitySettings()
         }
     }
 

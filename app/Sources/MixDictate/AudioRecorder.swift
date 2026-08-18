@@ -70,6 +70,18 @@ final class AudioRecorder {
         return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
     }
 
+    /// 录音进行中取一份当前音频的快照，用来做实时转写。
+    /// 不停止录音、不清空缓冲 —— 每次快照都是"从开始到现在"的完整音频。
+    func snapshotWAV() -> Data? {
+        pcmLock.lock()
+        let captured = pcm
+        pcmLock.unlock()
+
+        // 太短的片段模型只会输出噪音，不如不发
+        guard captured.count >= 16_000 else { return nil }  // 约 0.5 秒
+        return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
+    }
+
     // MARK: - 重采样
 
     private func append(_ buffer: AVAudioPCMBuffer) {

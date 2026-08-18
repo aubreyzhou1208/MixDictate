@@ -7,6 +7,9 @@ final class SettingsModel: ObservableObject {
     @Published var config: Config
     @Published var isCapturingKey = false
     @Published var statusMessage = ""
+    /// 打开设置时复查一次。权限可能在 App 运行期间被撤销，
+    /// 也可能因为重新编译（签名变了）而失效。
+    @Published var hasAccessibility = TextInjector.hasAccessibilityPermission
 
     /// 保存后回调，让 AppDelegate 决定要不要重挂热键 / 重启服务
     var onSave: ((Config, _ modelChanged: Bool) -> Void)?
@@ -17,6 +20,11 @@ final class SettingsModel: ObservableObject {
     init(config: Config) {
         self.config = config
         self.originalModel = config.model
+        self.hasAccessibility = TextInjector.hasAccessibilityPermission
+    }
+
+    func refreshPermissions() {
+        hasAccessibility = TextInjector.hasAccessibilityPermission
     }
 
     // MARK: - 录制说话键
@@ -92,8 +100,30 @@ struct SettingsView: View {
                 .padding(6)
             }
 
+            GroupBox("权限") {
+                HStack {
+                    Image(systemName: model.hasAccessibility
+                          ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(model.hasAccessibility ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("辅助功能")
+                        Text(model.hasAccessibility
+                             ? "已授权，可以自动输入文字"
+                             : "未授权 —— 转写正常但文字插不进输入框")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !model.hasAccessibility {
+                        Button("去授权") { TextInjector.openAccessibilitySettings() }
+                    }
+                }
+                .padding(6)
+            }
+
             GroupBox("文字处理") {
                 VStack(alignment: .leading, spacing: 8) {
+                    Toggle("录音时在屏幕上显示实时结果", isOn: $model.config.showLiveOverlay)
                     Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
                     Toggle("中文标点转全角（，。？！）", isOn: $model.config.fullwidthPunctuation)
                     Text("关掉全角后标点保持半角，写代码时更顺手。")
@@ -129,6 +159,14 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 420)
+        // 用户可能开着设置窗口跑去系统设置里授权，回来时要能看到状态更新
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            model.refreshPermissions()
+        }
     }
 
     private var buttonLabel: String {
@@ -155,7 +193,7 @@ final class SettingsWindowController {
         model.onSave = onSave
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

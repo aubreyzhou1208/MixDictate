@@ -31,6 +31,9 @@ class Transcriber:
         self.model = model
         self._session = None
         self._lock = threading.Lock()
+        # 边说边转写会在录音过程中不断发请求，加上松手时的最终请求，
+        # 同一个 MLX session 会被并发调用。模型不是线程安全的，必须串行。
+        self._inference_lock = threading.Lock()
         self._mock = os.environ.get("MIXDICTATE_BACKEND") == "mock"
 
     # ---------------------------------------------------------- 加载
@@ -60,12 +63,13 @@ class Transcriber:
         self._ensure_loaded()
         assert self._session is not None
 
-        try:
-            result = self._session.transcribe(audio_path, context=context or None)
-        except TypeError:
-            # 老版本的 mlx-qwen3-asr 可能没有 context 参数，降级为无偏置
-            log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
-            result = self._session.transcribe(audio_path)
+        with self._inference_lock:
+            try:
+                result = self._session.transcribe(audio_path, context=context or None)
+            except TypeError:
+                # 老版本的 mlx-qwen3-asr 可能没有 context 参数，降级为无偏置
+                log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
+                result = self._session.transcribe(audio_path)
 
         return ASRResult(
             text=getattr(result, "text", "") or "",

@@ -9,14 +9,24 @@ import CoreGraphics
 enum TextInjector {
     private static let vKeyCode: CGKeyCode = 9
 
-    static func insert(_ text: String) {
-        guard !text.isEmpty else { return }
+    /// 没有辅助功能权限时，系统会**静默丢弃**合成的按键事件 —— 不报错、
+    /// 不弹窗，用户看到的就是"按了没反应"。所以每次注入前都要复查：
+    /// 权限可能在 App 运行期间被撤销，也可能重新编译后失效。
+    /// 返回 false 表示没注入成功，调用方要告诉用户。
+    @discardableResult
+    static func insert(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
 
         let pasteboard = NSPasteboard.general
         let previous = pasteboard.string(forType: .string)
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+
+        guard AXIsProcessTrusted() else {
+            // 文字已经在剪贴板里了，用户至少能自己 Cmd+V —— 不还原剪贴板
+            return false
+        }
 
         // 给一点时间：用户刚松开说话键，修饰键状态需要先落定，
         // 否则合成的 Cmd+V 可能被残留的 Option 污染成别的快捷键。
@@ -31,6 +41,7 @@ enum TextInjector {
                 }
             }
         }
+        return true
     }
 
     private static func postPaste() {
@@ -48,10 +59,21 @@ enum TextInjector {
         up.post(tap: .cgAnnotatedSessionEventTap)
     }
 
-    /// 没有辅助功能权限的话，合成的按键事件会被系统静默丢弃。
+    static var hasAccessibilityPermission: Bool {
+        AXIsProcessTrusted()
+    }
+
     @discardableResult
     static func ensureAccessibilityPermission(prompt: Bool) -> Bool {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         return AXIsProcessTrustedWithOptions([key: prompt] as CFDictionary)
+    }
+
+    /// 直接跳到辅助功能设置页 —— 让用户自己在系统设置里翻太容易放弃了
+    static func openAccessibilitySettings() {
+        let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        )!
+        NSWorkspace.shared.open(url)
     }
 }

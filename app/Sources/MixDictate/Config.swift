@@ -16,6 +16,13 @@ struct Config {
     /// 短于这个时长的录音直接丢弃 —— 多半是误触
     var minimumDurationSeconds: Double = 0.3
 
+    /// 录音时在屏幕上显示实时转写结果
+    var showLiveOverlay: Bool = true
+
+    /// 实时结果的刷新间隔。太短会让模型一直在跑上一段音频，
+    /// 反而拖慢松手后的最终结果。
+    var partialIntervalSeconds: Double = 1.2
+
     /// 改这个要重启转写服务才生效
     var model: String = "Qwen/Qwen3-ASR-0.6B"
 
@@ -65,6 +72,10 @@ extension Config: Codable {
             ?? fallback.fullwidthPunctuation
         minimumDurationSeconds = try c.decodeIfPresent(Double.self, forKey: .minimumDurationSeconds)
             ?? fallback.minimumDurationSeconds
+        showLiveOverlay = try c.decodeIfPresent(Bool.self, forKey: .showLiveOverlay)
+            ?? fallback.showLiveOverlay
+        partialIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .partialIntervalSeconds)
+            ?? fallback.partialIntervalSeconds
         model = try c.decodeIfPresent(String.self, forKey: .model)
             ?? fallback.model
     }

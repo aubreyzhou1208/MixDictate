@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -99,6 +100,7 @@ async def transcribe(
     audio: UploadFile = File(...),
     strip_fillers: bool = Form(True),
     fullwidth_punct: bool = Form(True),
+    partial: bool = Form(False),
 ) -> JSONResponse:
     started = time.monotonic()
     payload = await audio.read()
@@ -113,7 +115,11 @@ async def transcribe(
             tmp.write(payload)
             tmp_path = tmp.name
 
-        result = transcriber.transcribe(tmp_path, context=table.context())
+        # 推理是同步的重活，直接在事件循环里跑会把整个服务卡住 ——
+        # 边说边转写时最终请求就会排在一堆中间请求后面动不了。
+        result = await asyncio.to_thread(
+            transcriber.transcribe, tmp_path, context=table.context()
+        )
     except Exception as exc:  # 服务不能因为一次失败就崩掉
         log.exception("转写失败")
         return JSONResponse({"text": "", "error": str(exc)}, status_code=500)
@@ -130,8 +136,12 @@ async def transcribe(
     )
 
     elapsed = time.monotonic() - started
-    log.info("[%.2fs] %s", elapsed, text or "（无内容）")
-    record_transcript(raw=raw, text=text, elapsed=elapsed)
+
+    # 中间结果不记日志也不打印 —— 一次听写会产生十几条，
+    # 全记下来会把真正有用的最终结果淹掉
+    if not partial:
+        log.info("[%.2fs] %s", elapsed, text or "（无内容）")
+        record_transcript(raw=raw, text=text, elapsed=elapsed)
 
     return JSONResponse(
         {
@@ -139,6 +149,7 @@ async def transcribe(
             "raw": raw,
             "language": result.language,
             "elapsed_ms": round(elapsed * 1000),
+            "partial": partial,
         }
     )
 
