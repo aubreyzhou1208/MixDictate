@@ -559,9 +559,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingText = ""
         pendingEnd = 0
 
-        overlay.setStatus("已取消")
-        overlay.update("已取消", isFinal: true)
-        overlay.hide(after: 0.8)
+        // 立刻收掉，不留"已取消"那一下。
+        //
+        // 别的收场都会在屏幕上停一会儿，因为有东西要给人看：最终文字、
+        // 错误原因。取消没有 —— 你已经知道自己按了 Esc，浮层再停 0.8 秒
+        // 只是让"我不要了"这个动作看起来没生效。**消失本身就是确认。**
+        overlay.hide(after: 0)
         state = .idle
     }
 
