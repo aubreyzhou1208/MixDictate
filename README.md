@@ -62,13 +62,19 @@ mlx-qwen3-asr 和相关依赖，第一次跑要几分钟。
 不想每次都手动 `git pull && ./install.sh` 的话：
 
 ```bash
-./scripts/autoupdate.sh install    # 每 30 分钟检查一次，有新版本就自动装
+./scripts/autoupdate.sh install    # 每分钟检查一次，有新版本就自动装
 ./scripts/autoupdate.sh status     # 看状态和最近的更新记录
 ./scripts/autoupdate.sh run        # 立刻检查一次
 ./scripts/autoupdate.sh uninstall  # 关掉
 ```
 
 更新完会弹一条通知告诉你装到哪个版本了。
+
+**为什么是轮询而不是推送**：真正的推送要求这台 Mac 能被外部连接（公网地址
+或内网穿透），代价太大。所以改成把检查做得极便宜 —— 每次只跑一句
+`git ls-remote`，一次 HTTPS 往返、不下载任何对象、几十毫秒。这样每分钟查
+一次的开销可以忽略，效果上就接近推完立刻装。没有更新时不写日志，
+免得每分钟一行把真正有用的记录淹掉。
 
 几条保护，都是为了不在你正用着的时候把 App 拆了：
 

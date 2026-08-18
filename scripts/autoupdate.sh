@@ -2,7 +2,7 @@
 # 自动更新：定期检查远端有没有新提交，有就拉下来重新安装。
 #
 #   ./scripts/autoupdate.sh run        立刻检查一次
-#   ./scripts/autoupdate.sh install    装成后台任务（每 30 分钟查一次）
+#   ./scripts/autoupdate.sh install    装成后台任务（每分钟查一次）
 #   ./scripts/autoupdate.sh uninstall  卸掉
 #   ./scripts/autoupdate.sh status     看状态和最近日志
 #
@@ -39,21 +39,31 @@ recently_used() {
 do_run() {
     cd "$ROOT"
 
+    local local_sha remote_sha
+    local_sha="$(git rev-parse HEAD)"
+
+    # 先用 ls-remote 问一句"远端最新是什么"。它只走一次 HTTPS 往返、
+    # 不下载任何对象，几十毫秒就回来 —— 便宜到可以每分钟跑一次，
+    # 效果上就接近"推完立刻装"。真有更新时才做完整的 fetch。
+    #
+    # 拿不到就安静退出：可能只是断网或者在飞行模式，不值得吵用户。
+    remote_sha="$(git ls-remote --heads origin "$BRANCH" 2>/dev/null | cut -f1)"
+    if [ -z "$remote_sha" ]; then
+        return 0
+    fi
+
+    # 没有变化时什么都不记 —— 每分钟写一行"已是最新"只会把日志淹掉，
+    # 真正出问题的那几行反而找不着
+    if [ "$local_sha" = "$remote_sha" ]; then
+        return 0
+    fi
+
     if [ -n "$(git status --porcelain)" ]; then
-        say "工作区有未提交的改动，跳过（不覆盖你自己的修改）"
+        say "有新版本，但工作区有未提交的改动，跳过（不覆盖你自己的修改）"
         return 0
     fi
 
     git fetch --quiet origin "$BRANCH"
-
-    local local_sha remote_sha
-    local_sha="$(git rev-parse HEAD)"
-    remote_sha="$(git rev-parse "origin/${BRANCH}")"
-
-    if [ "$local_sha" = "$remote_sha" ]; then
-        say "已是最新（${local_sha:0:7}）"
-        return 0
-    fi
 
     if recently_used; then
         say "刚用过听写，这轮先跳过，等下一轮"
@@ -83,6 +93,7 @@ do_run() {
 case "${1:-run}" in
 run)
     mkdir -p "$LOG_DIR"
+    # 没有更新时 do_run 不产出任何内容，日志不会被每分钟一行的噪音淹掉
     do_run 2>&1 | tee -a "$LOG"
     ;;
 
@@ -105,10 +116,10 @@ install)
     <key>WorkingDirectory</key>
     <string>${ROOT}</string>
 
-    <!-- 每 30 分钟查一次。查一次很便宜（一次 git fetch），
-         真有更新才会重新编译。 -->
+    <!-- 每分钟查一次。一次检查只是 git ls-remote：一次 HTTPS 往返、
+         不下载对象、几十毫秒。真有更新才会 fetch 并重新编译。 -->
     <key>StartInterval</key>
-    <integer>1800</integer>
+    <integer>60</integer>
 
     <key>RunAtLoad</key>
     <true/>
@@ -124,7 +135,7 @@ PLIST_EOF
     launchctl bootout "gui/${UID}/${LABEL}" 2>/dev/null || true
     launchctl bootstrap "gui/${UID}" "$PLIST"
 
-    echo "已开启自动更新，每 30 分钟检查一次。"
+    echo "已开启自动更新，每分钟检查一次。"
     echo "日志：$LOG"
     echo "以后我推送的改动会自己装到你机器上，不用再手动跑命令。"
     ;;
@@ -137,7 +148,7 @@ uninstall)
 
 status)
     if launchctl print "gui/${UID}/${LABEL}" >/dev/null 2>&1; then
-        echo "自动更新：已开启（每 30 分钟）"
+        echo "自动更新：已开启（每分钟检查一次）"
     else
         echo "自动更新：未开启"
     fi
