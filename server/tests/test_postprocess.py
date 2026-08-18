@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mixdictate_server.hotwords import HotwordTable
 from mixdictate_server.postprocess import (
+    collapse_repeats,
     fix_spacing,
     postprocess,
     strip_fillers,
@@ -23,14 +24,14 @@ def test_strips_filler_after_punctuation():
 
 
 def test_collapses_stutter():
-    assert strip_fillers("就是就是这个意思") == "就是这个意思"
-    assert strip_fillers("我我我知道") == "我知道"
+    assert collapse_repeats("就是就是这个意思") == "就是这个意思"
+    assert collapse_repeats("我我我知道") == "我知道"
 
 
 def test_keeps_legitimate_reduplication():
     # "谢谢""看看"是正常中文，不能被当成卡壳压缩掉
-    assert strip_fillers("谢谢你") == "谢谢你"
-    assert strip_fillers("我看看再说") == "我看看再说"
+    assert collapse_repeats("谢谢你") == "谢谢你"
+    assert collapse_repeats("我看看再说") == "我看看再说"
 
 
 def test_keeps_demonstratives():
@@ -175,31 +176,39 @@ def test_idioms_survive_the_full_chain():
 
 def test_collapses_repeated_phrase():
     # 口述时改口或卡壳，很容易把前半句重说一遍
-    assert strip_fillers("我觉得我觉得这个方案不错") == "我觉得这个方案不错"
-    assert strip_fillers("就是说就是说这个问题") == "就是说这个问题"
+    assert collapse_repeats("我觉得我觉得这个方案不错") == "我觉得这个方案不错"
+    assert collapse_repeats("就是说就是说这个问题") == "就是说这个问题"
 
 
 def test_collapses_long_repeat():
-    assert strip_fillers("这个方案这个方案确实可以") == "这个方案确实可以"
+    assert collapse_repeats("这个方案这个方案确实可以") == "这个方案确实可以"
 
 
 def test_non_adjacent_repeat_is_kept():
     # 隔了字的重复是正常表达，不是卡壳
     text = "这个方案好，这个方案确实好"
-    assert strip_fillers(text) == text
+    assert collapse_repeats(text) == text
 
 
 def test_legitimate_reduplication_survives_phrase_collapse():
-    assert strip_fillers("谢谢谢谢") == "谢谢"
-    assert strip_fillers("我看看再说") == "我看看再说"
+    assert collapse_repeats("谢谢谢谢") == "谢谢"
+    assert collapse_repeats("我看看再说") == "我看看再说"
 
 
-def test_repeat_collapse_through_full_chain():
+def test_repeats_are_kept_by_default():
+    """默认不去重。「超级超级好」是刻意的强调，不是卡壳 ——
+    删错的代价比留着重复大得多：用户能一眼看出多余的重复并删掉，
+    但被删掉的内容他根本不知道曾经存在过。"""
+    assert postprocess("超级超级好") == "超级超级好"
+    assert postprocess("我觉得我觉得这个方案") == "我觉得我觉得这个方案"
+
+
+def test_repeat_collapse_when_explicitly_enabled():
     raw = "嗯,我觉得我觉得这个 schema 要改"
-    assert postprocess(raw) == "我觉得这个 schema 要改"
+    assert postprocess(raw, collapse_repeated=True) == "我觉得这个 schema 要改"
 
 
 def test_repeated_reduplication_collapses_to_the_word():
     # 「谢谢谢谢」以单字重复四次的形式匹配，压成「谢」就错了
-    assert strip_fillers("谢谢谢谢") == "谢谢"
-    assert strip_fillers("看看看看") == "看看"
+    assert collapse_repeats("谢谢谢谢") == "谢谢"
+    assert collapse_repeats("看看看看") == "看看"

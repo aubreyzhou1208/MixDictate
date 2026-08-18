@@ -97,10 +97,12 @@ def test_numbers_and_filenames_survive(client):
 
 
 def test_raw_text_is_returned_for_debugging(client):
-    raw = "就是就是这个意思"
+    """raw 是模型的原始输出，text 是后处理之后的。两个都要返回 ——
+    只看最终结果分不清是模型听错了还是后处理改坏了。"""
+    raw = "嗯,这个方案不错"
     body = _transcribe(client, raw)
     assert body["raw"] == raw
-    assert body["text"] == "就是这个意思"
+    assert body["text"] == "这个方案不错"
 
 
 # ------------------------------------------------------------ 错误分支

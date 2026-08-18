@@ -67,7 +67,21 @@ _STUTTER_WHITELIST = {
 }
 
 
-def collapse_phrase_repeats(text: str) -> str:
+def collapse_repeats(text: str) -> str:
+    """消掉紧邻的重复。**默认不启用。**
+
+    最初以为这是稳赚的：口述卡壳时会把前半句重说一遍。但实际用下来
+    误伤太多 ——「超级超级好」是刻意的口语强调，「谢谢谢谢」到底该收成
+    「谢谢」还是保留，也没有可靠的判据。
+
+    删错的代价比留着重复大得多：用户能一眼看出多余的重复并删掉，
+    但被删掉的内容他根本不知道曾经存在过。所以这个功能改成要显式打开。
+    """
+    text = _STUTTER_RE.sub(_dedupe_match, text)
+    return _collapse_phrases(text)
+
+
+def _collapse_phrases(text: str) -> str:
     """消掉紧邻的短语重复。
 
     口述时改口或卡壳会把前半句重说一遍："我觉得我觉得这个方案不错"。
@@ -100,8 +114,7 @@ def _dedupe_match(match: re.Match) -> str:
 def strip_fillers(text: str) -> str:
     text = _LEADING_FILLER_RE.sub("", text)
 
-    text = _STUTTER_RE.sub(_dedupe_match, text)
-    return collapse_phrase_repeats(text)
+    return text
 
 
 # ---------------------------------------------------------------- 2. 空格
@@ -190,6 +203,7 @@ def postprocess(
     text: str,
     *,
     strip_filler_words: bool = True,
+    collapse_repeated: bool = False,
     fullwidth_punctuation: bool = True,
     spoken_numbers: bool = True,
     spoken_symbols: bool = True,
@@ -203,6 +217,8 @@ def postprocess(
         return ""
     if strip_filler_words:
         text = strip_fillers(text)
+    if collapse_repeated:
+        text = collapse_repeats(text)
 
     # 数字要在符号之前：「三点一四」里的「点」是小数点，
     # 「gmail 点 com」里的才是符号。两条规则的判定条件不冲突，

@@ -404,11 +404,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingText = text
             pendingEnd = snapshot.endOffset
 
-            if snapshot.atPause {
-                // 说话人在这里停顿了，这一段就此定稿 —— 之后不会再转写它。
-                // 这是长录音不再越来越慢的关键：开销只跟"最后一段"有关，
-                // 跟总时长无关。
-                committedText += text
+            if let boundary = snapshot.boundary {
+                // 这一段就此定稿 —— 之后不会再转写它。这是长录音不再越来越慢
+                // 的关键：开销只跟"最后一段"有关，跟总时长无关。
+                //
+                // 按长度硬切的段落一定断在句子中间，模型却会给它补一个句号。
+                // 直接拼下去会出现「这个方案。确实不错」这种断句。
+                committedText += boundary == .lengthCap
+                    ? Self.strippingSentenceEnd(text)
+                    : text
                 pendingText = ""
                 recorder.commit(upTo: snapshot.endOffset)
             }
@@ -492,6 +496,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 fail(error.localizedDescription)
             }
         }
+    }
+
+    /// 去掉句末标点。段落是按长度硬切出来的时候用 ——
+    /// 那种切口在句子中间，模型补的句号是错的。
+    private static func strippingSentenceEnd(_ text: String) -> String {
+        var result = text
+        while let last = result.last, "。！？，、.!?,".contains(last) {
+            result.removeLast()
+        }
+        return result
     }
 
     /// 0.4 秒的 16kHz 单声道 16 位音频。低于这个增量就认为内容没变。

@@ -116,6 +116,7 @@ def health() -> dict:
 async def transcribe(
     audio: UploadFile = File(...),
     strip_fillers: bool = Form(True),
+    collapse_repeats: bool = Form(False),
     fullwidth_punct: bool = Form(True),
     spoken_numbers: bool = Form(True),
     spoken_symbols: bool = Form(True),
@@ -179,6 +180,7 @@ async def transcribe(
     text = postprocess(
         text,
         strip_filler_words=strip_fillers,
+        collapse_repeated=collapse_repeats,
         fullwidth_punctuation=fullwidth_punct,
         spoken_numbers=spoken_numbers,
         spoken_symbols=spoken_symbols,

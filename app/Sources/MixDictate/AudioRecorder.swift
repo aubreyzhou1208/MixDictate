@@ -145,7 +145,14 @@ final class AudioRecorder {
     /// 返回的 endOffset 要原样传回 commit(upTo:)。不能事后用"当前长度"
     /// 代替 —— 转写要花时间，那期间用户还在说，长度早变了，
     /// 用新长度定稿会把没转过的音频一起标记成已完成，直接丢字。
-    func pendingSnapshot() -> (wav: Data, endOffset: Int, atPause: Bool)? {
+    enum Boundary {
+        /// 说话人真的停顿了。这种地方多半是句子或分句的结束。
+        case pause
+        /// 一直不停顿，按长度硬切。**一定切在句子中间。**
+        case lengthCap
+    }
+
+    func pendingSnapshot() -> (wav: Data, endOffset: Int, boundary: Boundary?)? {
         pcmLock.lock()
         let pending = pcm.subdata(in: committedOffset..<pcm.count)
         let endOffset = pcm.count
@@ -158,16 +165,21 @@ final class AudioRecorder {
         // 末尾静音够长 = 说话人停顿了，可以在这里切一刀。
         // 切在停顿处而不是随便切，是为了不把一个词劈成两半。
         // 一直不停顿的话段落会越长越慢，所以也按长度强制切一刀。
-        // 可能切在词中间，但比让延迟无上限地涨上去强 —— 后者是用户
-        // 说"超过三十秒就非常慢"的直接原因。
-        let atPause =
-            (silenceBytes >= Self.pauseBytes && pending.count >= Self.minSegmentBytes)
-            || pending.count >= Self.maxSegmentBytes
+        // 但要把两种切法区分开：按停顿切的地方多半是句子结束，按长度硬切的
+        // 一定在句子中间 —— 后者不能保留模型补出来的句号。
+        let boundary: Boundary?
+        if silenceBytes >= Self.pauseBytes && pending.count >= Self.minSegmentBytes {
+            boundary = .pause
+        } else if pending.count >= Self.maxSegmentBytes {
+            boundary = .lengthCap
+        } else {
+            boundary = nil
+        }
 
         return (
             Self.makeWAV(pcm: pending, sampleRate: 16_000, channels: 1),
             endOffset,
-            atPause
+            boundary
         )
     }
 
@@ -178,8 +190,11 @@ final class AudioRecorder {
         pcmLock.unlock()
     }
 
-    /// 0.6 秒静音算一次停顿
-    private static let pauseBytes = Int(0.6 * 16_000) * 2
+    /// 1 秒静音才算一次停顿。
+    ///
+    /// 原来是 0.6 秒，太敏感了：说话时想下一句该怎么讲，很容易停顿半秒多，
+    /// 那不是句子结束。切在那里模型会补一个句号，句子就被硬生生断开了。
+    private static let pauseBytes = Int(1.0 * 16_000) * 2
     /// 段落至少要有 1.5 秒，否则切得太碎反而拖慢
     private static let minSegmentBytes = Int(1.5 * 16_000) * 2
     /// 段落上限 8 秒。到了就强制切，保证单次推理耗时有天花板。

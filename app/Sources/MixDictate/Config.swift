@@ -13,6 +13,10 @@ struct Config {
     /// 中文标点转全角。写代码时可能更想要半角，所以留成开关。
     var fullwidthPunctuation: Bool = true
 
+    /// 合并卡壳时的重复。**默认关闭** —— 「超级超级好」是刻意的强调，
+    /// 不是卡壳，而删错的代价比留着重复大得多。
+    var collapseRepeats: Bool = false
+
     /// 口语数字还原成阿拉伯数字：「三点一四」→「3.14」
     var spokenNumbers: Bool = true
 
@@ -96,6 +100,8 @@ extension Config: Codable {
             ?? fallback.stripFillers
         fullwidthPunctuation = try c.decodeIfPresent(Bool.self, forKey: .fullwidthPunctuation)
             ?? fallback.fullwidthPunctuation
+        collapseRepeats = try c.decodeIfPresent(Bool.self, forKey: .collapseRepeats)
+            ?? fallback.collapseRepeats
         spokenNumbers = try c.decodeIfPresent(Bool.self, forKey: .spokenNumbers)
             ?? fallback.spokenNumbers
         spokenSymbols = try c.decodeIfPresent(Bool.self, forKey: .spokenSymbols)
