@@ -29,6 +29,14 @@ struct Config {
     /// 录音时在屏幕上显示实时转写结果
     var showLiveOverlay: Bool = true
 
+    /// 松手后用完整音频重转一遍的时长上限（秒）。
+    ///
+    /// 分段是为实时预览提速的，代价是每段只看得到自己那两三秒 ——
+    /// 上下文没了，识别变差、段落边界的标点只能靠猜。短录音在松手时
+    /// 重转一次就把这两样补回来；超过这个长度就不重转，那笔开销正是
+    /// 当初做分段要解决的问题。设成 0 可以完全关掉。
+    var fullPassMaxSeconds: Double = 45
+
     /// 实时结果的刷新间隔下限。段落长度已经封顶，单次推理耗时有天花板，
     /// 所以可以刷得比以前勤。
     var partialIntervalSeconds: Double = 0.8
@@ -113,6 +121,8 @@ extension Config: Codable {
             ?? fallback.showLiveOverlay
         partialIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .partialIntervalSeconds)
             ?? fallback.partialIntervalSeconds
+        fullPassMaxSeconds = try c.decodeIfPresent(Double.self, forKey: .fullPassMaxSeconds)
+            ?? fallback.fullPassMaxSeconds
         liveInsertion = try c.decodeIfPresent(Bool.self, forKey: .liveInsertion)
             ?? fallback.liveInsertion
         insertionMethod = try c.decodeIfPresent(String.self, forKey: .insertionMethod)

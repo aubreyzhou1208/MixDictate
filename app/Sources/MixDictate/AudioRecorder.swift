@@ -75,7 +75,14 @@ final class AudioRecorder {
     }
 
     /// 返回完整的 WAV 数据；录音太短或没声音时返回 nil。
-    func stop(minimumDuration: Double) -> Data? {
+    /// 停止录音。
+    ///
+    /// 返回两份：完整音频和还没定稿的尾巴。
+    ///
+    /// 需要完整音频，是因为分段转写为了速度牺牲了准确率 —— 每段只能看到
+    /// 自己那两三秒，丢掉了上下文。所以短录音在松手时会拿完整音频重转
+    /// 一遍，让最终结果享受完整上下文。分段只服务于说话过程中的实时预览。
+    func stop(minimumDuration: Double) -> (full: Data, tail: Data)? {
         guard isRecording else { return nil }
 
         engine.inputNode.removeTap(onBus: 0)
@@ -94,12 +101,20 @@ final class AudioRecorder {
 
         // 只返回还没定稿的尾巴。前面的段落早就转过了，再转一遍纯属浪费 ——
         // "松手之后要等很久"正是这么来的。
-        let tail = captured.subdata(in: min(committedOffset, captured.count)..<captured.count)
+        let tailPCM = captured.subdata(
+            in: min(committedOffset, captured.count)..<captured.count
+        )
 
-        // 空 Data 和 nil 是两回事：nil = 录音太短没内容，
+        // 尾巴的空 Data 和整体的 nil 是两回事：nil = 录音太短没内容，
         // 空 Data = 录到了但全部已经定稿，尾巴没东西要转。
-        guard !tail.isEmpty else { return Data() }
-        return Self.makeWAV(pcm: tail, sampleRate: 16_000, channels: 1)
+        let tail = tailPCM.isEmpty
+            ? Data()
+            : Self.makeWAV(pcm: tailPCM, sampleRate: 16_000, channels: 1)
+
+        return (
+            full: Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1),
+            tail: tail
+        )
     }
 
     /// 未定稿那一段的时长（秒）。刷新间隔按它算，而不是按总时长 ——

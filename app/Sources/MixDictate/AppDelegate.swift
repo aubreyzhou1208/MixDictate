@@ -434,7 +434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         stopPartialUpdates()
 
-        guard let tailWav = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
+        guard let audio = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
             // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从
             // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
             let reason = recorder.heardSound
@@ -447,15 +447,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // 尾巴是空的：说话正好停在段落边界上，全部内容都已经定稿
-        if tailWav.isEmpty {
+        state = .transcribing
+        overlay.setStatus("整理中…")
+        overlay.update("整理中…", isFinal: false)
+        let client = TranscriptionClient(config: config)
+
+        // 短录音走完整音频重转一遍。分段是为了说话过程中的实时预览提速，
+        // 代价是每段只看得到自己那两三秒 —— 上下文没了，识别会变差，
+        // 段落边界的标点也只能靠猜。松手时重转一次就把这两样都补回来。
+        //
+        // 太长的录音不重转：那笔开销正是当初做分段要解决的问题。
+        let totalSeconds = recorder.capturedSeconds
+        let useFullPass = totalSeconds <= config.fullPassMaxSeconds
+
+        if useFullPass {
+            Task { @MainActor in
+                do {
+                    let text = try await client.transcribe(wav: audio.full)
+                    guard !text.isEmpty else {
+                        reportEmptyResult()
+                        return
+                    }
+                    deliver(text)
+                } catch {
+                    reportFailure(error)
+                }
+            }
+            return
+        }
+
+        // 长录音：拼接已定稿的段落，只转最后那一段
+        if audio.tail.isEmpty {
             deliver(committedText)
             return
         }
 
-        // 尾巴比最后一次中间结果几乎没长（0.4 秒以内），那次的文字就是
-        // 最终结果。再跑一次推理纯属重复劳动，而松手之后的等待恰恰是
-        // 整个流程里最难受的一段。
         if !pendingText.isEmpty,
            recorder.capturedBytes - pendingEnd < Self.reusePartialThresholdBytes {
             NSLog("MixDictate: 尾部音频未再增长，直接用最后一次中间结果")
@@ -463,56 +489,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        state = .transcribing
-        overlay.setStatus("整理中…")
-        overlay.update("整理中…", isFinal: false)
-        let client = TranscriptionClient(config: config)
-
         Task { @MainActor in
             do {
-                // 只转最后这一段。前面的段落早就转过并定稿了 ——
-                // 这就是长录音松手后不再等很久的原因。
-                let tail = try await client.transcribe(wav: tailWav)
+                let tail = try await client.transcribe(wav: audio.tail)
                 let text = committedText + tail
-
                 guard !text.isEmpty else {
-                    let reason = recorder.heardSound
-                        ? "没识别出内容"
-                        : "没有听到声音，检查一下麦克风权限"
-                    overlay.setStatus(reason)
-                    overlay.update(reason, isFinal: true)
-                    overlay.hide(after: 1.6)
-                    state = .idle
+                    reportEmptyResult()
                     return
                 }
                 deliver(text)
             } catch {
-                // 错误必须显示在浮层上。只写进菜单栏图标是不够的 ——
-                // 菜单栏图标多了会被刘海挤掉，用户根本看不见，
-                // 于是转写失败在他眼里就成了「什么都没发生」。
-                overlay.setStatus("出错了")
-                overlay.update("出错了：\(error.localizedDescription)", isFinal: true)
-                overlay.hide(after: 5)
-                fail(error.localizedDescription)
+                reportFailure(error)
             }
         }
     }
 
-    /// 一段定稿文字要不要保留它的句末标点。
+    private func reportEmptyResult() {
+        let reason = recorder.heardSound
+            ? "没识别出内容"
+            : "没有听到声音，检查一下麦克风权限"
+        overlay.setStatus(reason)
+        overlay.update(reason, isFinal: true)
+        overlay.hide(after: 1.6)
+        state = .idle
+    }
+
+    private func reportFailure(_ error: Error) {
+        // 错误必须显示在浮层上。只写进菜单栏图标是不够的 ——
+        // 菜单栏图标多了会被刘海挤掉，用户根本看不见，
+        // 于是转写失败在他眼里就成了「什么都没发生」。
+        overlay.setStatus("出错了")
+        overlay.update("出错了：\(error.localizedDescription)", isFinal: true)
+        overlay.hide(after: 5)
+        fail(error.localizedDescription)
+    }
+
+    /// 拼接用的段落文字：**一律去掉句末标点**。
     ///
-    /// 模型是按段推理的：不管你说没说完，它都会给这一段补一个句号。
-    /// 而段落边界是**我们**切的，不是说话人断的句 —— 照单全收就会出现
-    /// 满篇多余的句号，用户的原话是「老是会自己加进去一个句号」。
+    /// 上一版试过用停顿时长判断句子有没有说完 —— 停 2 秒以上就保留句号。
+    /// 那个思路是错的：想词时停三秒和说完一句停三秒，从音频上分不出来。
+    /// 用户的反馈很直接：「中间我停顿了一下，它就会自动给我加进来一个句号，
+    /// 这个是我不想看到的」。
     ///
-    /// 判据是停顿时长：停两秒以上多半真的说完了一句，保留；停一秒多
-    /// 通常只是在想词，去掉。按长度硬切的一律去掉，那种切口必在句中。
+    /// 少一个该有的句号，用户补一下就行；多一个不该有的句号，是把他的
+    /// 一句话劈成了两句。所以宁可不加。
+    ///
+    /// 真正的标点由松手后那次完整音频的推理给出 —— 那时模型看得到全文。
     private static func joinable(_ text: String, at boundary: AudioRecorder.Boundary) -> String {
-        switch boundary {
-        case .pause(let seconds) where seconds >= 2.0:
-            return text
-        default:
-            return strippingSentenceEnd(text)
-        }
+        _ = boundary
+        return strippingSentenceEnd(text)
     }
 
     private static func strippingSentenceEnd(_ text: String) -> String {
