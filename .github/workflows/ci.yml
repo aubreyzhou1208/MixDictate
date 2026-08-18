@@ -67,3 +67,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: shellcheck install.sh scripts/*.sh
+      - name: 检查变量展开后紧跟多字节字符
+        # macOS 自带的 bash 3.2 在 UTF-8 环境下会把多字节字符的字节算进变量名，
+        # "$VAR（中文）" 会去找一个不存在的变量，配上 set -u 直接报
+        # unbound variable。Linux 上的新版 bash 不会这样，shellcheck 也查不出来
+        # —— 只能靠这条规则挡住。
+        run: |
+          if grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]' install.sh scripts/*.sh; then
+            echo "::error::变量展开后紧跟多字节字符，改用 \${VAR} 形式"
+            exit 1
+          fi
+          echo "没有发现风险写法"

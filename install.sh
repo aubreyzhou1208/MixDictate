@@ -43,7 +43,11 @@ echo "macOS $(sw_vers -productVersion) · $(uname -m) · $(python3 --version)"
 
 # ---------------------------------------------------------------- Python 环境
 
-step "准备 Python 环境（$VENV）"
+# 变量后面紧跟中文标点时必须用 ${} —— macOS 自带的 bash 3.2 在 UTF-8
+# 环境下会把多字节字符的字节算进变量名，于是它会去找一个根本不存在的
+# 变量（名字里带上了那个中文括号的字节），配上 set -u 直接报
+# unbound variable。CI 里有一条规则专门挡这种写法。
+step "准备 Python 环境（${VENV}）"
 
 mkdir -p "$SUPPORT"
 if [ ! -x "$VENV/bin/python" ]; then
@@ -54,9 +58,26 @@ fi
 
 # 非 editable 安装：装完之后 App 就不依赖这个仓库目录了，
 # 你可以把源码挪走甚至删掉，App 照常运行
-step "安装转写服务（含 mlx-qwen3-asr，几百 MB，慢一点）"
+step "安装转写服务"
 "$VENV/bin/python" -m pip install "$ROOT/server" --quiet
-"$VENV/bin/python" -m pip install "$ROOT/server[mlx]" --quiet
+
+# 这一步要下几百 MB，不能用 --quiet —— 屏幕空白好几分钟，谁都会以为卡死了
+step "安装 mlx-qwen3-asr（几百 MB，会显示进度）"
+if ! "$VENV/bin/python" -m pip install "$ROOT/server[mlx]"; then
+    py_version="$("$VENV/bin/python" --version)"
+    {
+        printf '\n\033[31m错误：mlx-qwen3-asr 安装失败。\033[0m\n'
+        printf '常见原因是 Python 版本太新，还没有对应的预编译包。\n'
+        printf '当前版本：%s\n\n' "$py_version"
+        printf '可以换 Python 3.12 再试：\n'
+        printf '  brew install python@3.12\n'
+        printf '  rm -rf "%s"\n' "$VENV"
+        # shellcheck disable=SC2016  # 故意不展开：这是给用户复制的字面命令
+        printf '  "$(brew --prefix)/bin/python3.12" -m venv "%s"\n' "$VENV"
+        printf '  ./install.sh\n'
+    } >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------- 编译 App
 
