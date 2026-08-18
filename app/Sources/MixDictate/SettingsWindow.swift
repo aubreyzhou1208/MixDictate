@@ -86,6 +86,43 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
+        // 设置项只会越加越多，窗口高度却是有限的。不放进 ScrollView 的话，
+        // 超出的部分既看不见也够不着 —— 而"够不着"比"难看"严重得多。
+        //
+        // 保存按钮留在滚动区外面固定住：让人先滚到底才能保存，
+        // 是同一个毛病换了个位置。
+        VStack(spacing: 0) {
+            ScrollView {
+                settingsGroups
+                    .padding(20)
+            }
+
+            Divider()
+
+            HStack {
+                Text(model.statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("保存") { model.save() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .frame(minWidth: 440, minHeight: 320)
+        // 用户可能开着设置窗口跑去系统设置里授权，回来时要能看到状态更新
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            model.refreshPermissions()
+        }
+    }
+
+    @ViewBuilder
+    private var settingsGroups: some View {
         VStack(alignment: .leading, spacing: 16) {
             GroupBox("说话键") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -258,25 +295,6 @@ struct SettingsView: View {
                 }
                 .padding(6)
             }
-
-            HStack {
-                Text(model.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("保存") { model.save() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
-        // 用户可能开着设置窗口跑去系统设置里授权，回来时要能看到状态更新
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: NSApplication.didBecomeActiveNotification
-            )
-        ) { _ in
-            model.refreshPermissions()
         }
     }
 
@@ -303,12 +321,21 @@ final class SettingsWindowController {
         let model = SettingsModel(config: config)
         model.onSave = onSave
 
+        // 可缩放 + 有最小尺寸。固定尺寸的窗口一旦装不下内容就彻底没救 ——
+        // 既不能拉大也不能滚动，那部分设置等于不存在。
+        //
+        // 默认高度按屏幕来定：外接大屏上可以一次看完，
+        // 笔记本屏幕上也不会高过可用区域。
+        let visibleHeight = NSScreen.main?.visibleFrame.height ?? 800
+        let height = min(620, max(420, visibleHeight - 160))
+
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 560),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: height),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
+        window.minSize = NSSize(width: 440, height: 320)
         window.title = "MixDictate 设置"
         window.contentViewController = NSHostingController(rootView: SettingsView(model: model))
         window.center()
