@@ -57,6 +57,26 @@ mlx-qwen3-asr 和相关依赖，第一次跑要几分钟。
 ./scripts/autostart.sh uninstall   # 卸
 ```
 
+### 自动更新
+
+不想每次都手动 `git pull && ./install.sh` 的话：
+
+```bash
+./scripts/autoupdate.sh install    # 每 30 分钟检查一次，有新版本就自动装
+./scripts/autoupdate.sh status     # 看状态和最近的更新记录
+./scripts/autoupdate.sh run        # 立刻检查一次
+./scripts/autoupdate.sh uninstall  # 关掉
+```
+
+更新完会弹一条通知告诉你装到哪个版本了。
+
+几条保护，都是为了不在你正用着的时候把 App 拆了：
+
+- **工作区有未提交的改动就跳过** —— 绝不覆盖你自己的修改
+- **只做快进合并** —— 有分叉说明本地有额外提交，那种情况需要人来判断
+- **三分钟内用过听写就跳过这轮** —— 等下一轮再更
+- **编译失败时旧版本原封不动** —— `install.sh` 先编译成功才动 `/Applications`
+
 ## 用法
 
 **按住右 Option 说话，松开。** 文字出现在光标处。
