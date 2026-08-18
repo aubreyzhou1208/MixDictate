@@ -310,7 +310,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task { @MainActor in
             defer { partialInFlight = false }
-            guard let text = try? await client.transcribe(wav: wav, partial: true) else { return }
+
+            let text: String
+            do {
+                text = try await client.transcribe(wav: wav, partial: true)
+            } catch {
+                // 中间请求失败不打断录音，但要留下痕迹 —— 松手后的最终请求
+                // 多半会因为同样的原因失败，到时候浮层会把它显示出来
+                NSLog("MixDictate: 中间转写失败 %@", error.localizedDescription)
+                return
+            }
             // 请求飞在路上时用户可能已经松手了，这时别再盖掉最终结果
             guard state == .recording else { return }
             // 空结果别覆盖掉「没有听到声音」那条提示
@@ -365,7 +374,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 state = .idle
             } catch {
-                overlay.hide()
+                // 错误必须显示在浮层上。只写进菜单栏图标是不够的 ——
+                // 菜单栏图标多了会被刘海挤掉，用户根本看不见，
+                // 于是转写失败在他眼里就成了「什么都没发生」。
+                overlay.update("出错了：\(error.localizedDescription)", isFinal: true)
+                overlay.hide(after: 5)
                 fail(error.localizedDescription)
             }
         }

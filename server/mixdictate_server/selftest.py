@@ -54,10 +54,19 @@ def ask_live_server(audio: Path) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             return True, json.loads(response.read()).get("text", "")
+    except urllib.error.HTTPError as exc:
+        # 服务是活的，只是处理请求时出错了 —— 跟"连不上"完全是两回事。
+        # 服务端出错时会把异常信息放在响应体里，那正是我们要的东西。
+        detail = ""
+        try:
+            detail = json.loads(exc.read()).get("error", "")
+        except (ValueError, OSError):
+            pass
+        return False, f"服务返回 HTTP {exc.code}：{detail or '（响应体里没有错误详情）'}"
     except urllib.error.URLError as exc:
-        return False, str(exc)
+        return False, f"连不上服务：{exc.reason}"
     except (ValueError, OSError) as exc:
-        return False, str(exc)
+        return False, f"请求失败：{exc}"
 
 
 def show(label: str, value: str) -> None:
@@ -125,7 +134,18 @@ def main() -> int:
     if reachable:
         show("服务返回", live)
     else:
-        print(f"连不上服务：{live}")
+        print(live)
+        print()
+        print("服务日志最后 25 行：")
+        print("-" * 60)
+        log_file = paths.log_dir() / "server.log"
+        if log_file.exists():
+            lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in lines[-25:]:
+                print(line)
+        else:
+            print(f"（没有 {log_file}）")
+        print("-" * 60)
 
     print("\n" + "=" * 60)
     print("结论")
@@ -144,8 +164,8 @@ def main() -> int:
         print("最常见的原因是跑着的还是残留的旧服务：")
         print("  pkill -f mixdictate_server; pkill -x MixDictate; open -a MixDictate")
     elif not reachable:
-        print("模型这边没问题，但服务连不上。先把服务起起来：")
-        print("  open -a MixDictate")
+        print("直接调模型没问题，但走服务这条路失败了。")
+        print("上面的服务日志里应该有一段 traceback —— 那就是根因。")
     else:
         print("整条链路都正常，包括正在运行的服务。")
         print("现在按住说话键说一句话，文字应该会出现在光标处。")
