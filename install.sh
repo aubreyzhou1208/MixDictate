@@ -104,6 +104,21 @@ if [ -d "$INSTALLED" ]; then
 fi
 cp -R "$ROOT/build/$APP_NAME.app" "$INSTALLED"
 
+# 每次重新编译，ad-hoc 签名的哈希都会变一个，而 macOS 的 TCC 是按签名记
+# 授权的 —— 于是麦克风/辅助功能的授权可能悄悄失效，系统设置里的开关却还
+# 显示是开的。表现是「明明给了权限，却一直说没听到声音」。
+#
+# 没法在这里替用户重新授权（那是系统的事），但至少要把话说在前面，
+# 不然他会对着一个开着的开关百思不得其解。
+STAMP="$SUPPORT/last_cdhash"
+NEW_HASH="$(codesign -dvvv "$INSTALLED" 2>&1 | sed -n 's/^CDHash=//p' | head -1)"
+if [ -f "$STAMP" ] && [ -n "$NEW_HASH" ] && [ "$NEW_HASH" != "$(cat "$STAMP")" ]; then
+    printf '\n⚠️  App 签名变了，麦克风和辅助功能授权可能已失效\n'
+    printf '   （系统设置里的开关会照常显示为开，但实际上不生效）\n'
+    printf '   要是听写说「没有听到声音」，跑：./scripts/permissions.sh reset\n\n'
+fi
+[ -n "$NEW_HASH" ] && printf '%s' "$NEW_HASH" > "$STAMP"
+
 # 装完直接启动。不只是省一步 —— macOS 只有在 App 主动请求辅助功能权限时
 # 才会把它加进「隐私与安全性 › 辅助功能」的列表里。App 没跑过，用户去那个
 # 列表里就是找不到它，只能手动点 + 号翻文件夹。

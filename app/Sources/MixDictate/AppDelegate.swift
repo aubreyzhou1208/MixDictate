@@ -556,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
             let reason = recorder.heardSound
                 ? "太短了，没录到内容"
-                : "没有听到声音，检查一下麦克风权限"
+                : microphoneHint
             overlay.setStatus(reason)
             overlay.update(reason, isFinal: true)
             overlay.hide(after: 1.6)
@@ -624,7 +624,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reportEmptyResult() {
         let reason: String
         if !recorder.heardSound {
-            reason = "没有听到声音，检查一下麦克风权限"
+            reason = microphoneHint
         } else if config.voiceThreshold > 0,
                   Double(recorder.loudestLevel) < config.voiceThreshold {
             // 麦克风有信号，但全程没越过人声门限，整段都被当成环境音挡掉了。
@@ -763,6 +763,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 麦克风一片死寂时该说什么。**「检查一下麦克风权限」是不够的** ——
+    /// 用户会去看，发现开关明明是开的，然后就卡在那儿了。
+    ///
+    /// 最常见的原因恰恰是"开关开着但授权失效"：这个 App 是 ad-hoc 签名的，
+    /// 每次重新编译哈希都变一个，而 TCC 是按签名记授权的，旧记录就对不上了。
+    /// 系统设置里那个开关照常显示为开，麦克风也照常"工作"，只是样本全是零。
+    private var microphoneHint: String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return "麦克风只送来静音 —— 授权多半在重装时失效了，点菜单里「重新申请麦克风权限…」"
+        case .notDetermined:
+            return "还没申请过麦克风权限，重启一下 App"
+        default:
+            return "麦克风权限没开，去系统设置 › 隐私与安全性 › 麦克风"
+        }
+    }
+
+    /// 重装之后授权失效的自救入口。
+    @objc private func requestMicrophoneAgain() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "重新申请麦克风权限"
+        alert.informativeText = """
+            这个 App 用的是 ad-hoc 签名（没有开发者证书），每次重新编译签名的
+            哈希都会换一个。而 macOS 是按签名记授权的，旧的那条就对不上了。
+
+            麻烦的是系统设置里的开关**看着还是开的**，实际已经失效：麦克风照常
+            工作，只是送来的样本全是零 —— 所以「我明明开了权限」是完全合理的
+            困惑，不是你记错了。
+
+            「重置并重启」会清掉这条记录并重开 App，下次录音时系统重新弹窗。
+            """
+        alert.addButton(withTitle: "重置并重启")
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "取消")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            resetMicrophoneAuthorization()
+        case .alertSecondButtonReturn:
+            SystemSettings.openMicrophone()
+        default:
+            break
+        }
+    }
+
+    private func resetMicrophoneAuthorization() {
+        let bundleID = Bundle.main.bundleIdentifier ?? "dev.mixdictate.app"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        // 只重置这一个 bundle id，不动系统里其他 App 的授权
+        task.arguments = ["reset", "Microphone", bundleID]
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            NSLog("MixDictate: tccutil 跑不起来：%@", error.localizedDescription)
+            SystemSettings.openMicrophone()
+            return
+        }
+
+        // 必须重启：TCC 的判定结果在进程里是缓存住的，不重开这个进程，
+        // 重置了也还是拿不到弹窗。
+        relaunch()
+    }
+
+    private func relaunch() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL, configuration: configuration
+        ) { _, error in
+            if let error {
+                NSLog("MixDictate: 重启失败：%@", error.localizedDescription)
+                return
+            }
+            Task { @MainActor in
+                // 给新实例一点时间把菜单栏图标挂上，免得中间有一段
+                // 两个都不在的空窗
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
     private func reportMicrophoneDenied() {
         fail("麦克风权限被拒 —— 录不到任何声音")
 
@@ -881,6 +967,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "查看转写记录…", action: #selector(openTranscriptLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "播放最近一次录音…", action: #selector(openLastRecording), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "校准人声门限…", action: #selector(calibrateThreshold), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "重新申请麦克风权限…", action: #selector(requestMicrophoneAgain), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "重新申请辅助功能权限…", action: #selector(requestAccessibilityAgain), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MixDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
