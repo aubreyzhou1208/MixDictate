@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import tempfile
@@ -144,17 +143,21 @@ async def transcribe(
         if SAVE_AUDIO and not partial:
             save_last_audio(payload)
 
-        # 推理是同步的重活，直接在事件循环里跑会把整个服务卡住 ——
-        # 边说边转写时最终请求就会排在一堆中间请求后面动不了。
-        result = await asyncio.to_thread(
-            transcriber.transcribe, tmp_path, context=table.context()
+        # 推理是同步的重活，不能直接在事件循环里跑，否则边说边转写时
+        # 最终请求会排在一堆中间请求后面动不了。
+        #
+        # 但也不能用 asyncio.to_thread：MLX 的 GPU stream 是线程局部的，
+        # 落到不同工作线程上会抛 "There is no Stream(gpu, 1) in current
+        # thread."。Transcriber 内部固定用同一个专用线程解决这个问题。
+        result = await transcriber.transcribe_async(
+            tmp_path, context=table.context()
         )
 
         # 结果为空时，先怀疑是热词偏置把解码带跑偏了 —— 去掉 context 再试一次。
         # 这既是自动修复，也是诊断：日志会说清楚是哪一种情况。
         if not result.text.strip() and table.context():
             log.warning("带热词偏置的结果为空，去掉 context 重试")
-            retry = await asyncio.to_thread(transcriber.transcribe, tmp_path, context="")
+            retry = await transcriber.transcribe_async(tmp_path, context="")
             if retry.text.strip():
                 log.warning("去掉 context 后有结果了 —— 空结果是热词偏置造成的")
                 result = retry

@@ -10,9 +10,11 @@ Session。0.6B 在 M2 Pro 上首次加载约 3-10 秒，之后单次几秒钟的
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -83,49 +85,57 @@ class ASRResult:
 
 
 class Transcriber:
+    """所有 MLX 操作都固定在同一个线程上执行。
+
+    MLX 的 GPU stream 是线程局部的：在 A 线程加载模型、到 B 线程做推理，
+    会直接抛 "There is no Stream(gpu, 1) in current thread."。
+    用 asyncio.to_thread 就正好踩中这个 —— 每次可能落到不同的工作线程上。
+
+    所以这里用一个 max_workers=1 的执行器：模型加载和每次推理都在它那
+    唯一的线程上跑。事件循环不会被阻塞，线程亲和性也得到保证。
+    顺带还天然把推理串行化了（模型本来也不是线程安全的）。
+    """
+
     def __init__(self, model: str = DEFAULT_MODEL) -> None:
         self.model = model
         self._session = None
-        self._lock = threading.Lock()
-        # 边说边转写会在录音过程中不断发请求，加上松手时的最终请求，
-        # 同一个 MLX session 会被并发调用。模型不是线程安全的，必须串行。
-        self._inference_lock = threading.Lock()
         self._mock = os.environ.get("MIXDICTATE_BACKEND") == "mock"
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="mixdictate-asr"
+        )
+        # 实际执行推理的线程名。所有调用都必须落在同一个线程上 ——
+        # 这个字段让这件事可观测、可测试，而不是靠约定。
+        self.worker_thread: str | None = None
 
-    # ---------------------------------------------------------- 加载
+    # ---------------------------------------------------------- 只在专用线程上跑
 
     def _ensure_loaded(self) -> None:
         if self._session is not None or self._mock:
             return
-        with self._lock:
-            if self._session is not None:
-                return
-            from mlx_qwen3_asr import Session  # 仅 Apple Silicon 可用
 
-            log.info("正在加载模型 %s ...", self.model)
-            self._session = Session(model=self.model)
-            log.info("模型加载完成")
+        from mlx_qwen3_asr import Session  # 仅 Apple Silicon 可用
 
-    def warmup(self) -> None:
-        """在服务启动时预热，避免第一次听写卡住好几秒。"""
-        self._ensure_loaded()
+        log.info("正在加载模型 %s ...", self.model)
+        self._session = Session(model=self.model)
+        log.info("模型加载完成（线程 %s）", threading.current_thread().name)
 
-    # ---------------------------------------------------------- 转写
+    def _run(self, audio_path: str, context: str) -> ASRResult:
+        self.worker_thread = threading.current_thread().name
 
-    def transcribe(self, audio_path: str, *, context: str = "") -> ASRResult:
         if self._mock:
-            return ASRResult(text=os.environ.get("MIXDICTATE_MOCK_TEXT", ""), language="zh")
+            return ASRResult(
+                text=os.environ.get("MIXDICTATE_MOCK_TEXT", ""), language="zh"
+            )
 
         self._ensure_loaded()
         assert self._session is not None
 
-        with self._inference_lock:
-            try:
-                result = self._session.transcribe(audio_path, context=context or None)
-            except TypeError:
-                # 老版本的 mlx-qwen3-asr 可能没有 context 参数，降级为无偏置
-                log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
-                result = self._session.transcribe(audio_path)
+        try:
+            result = self._session.transcribe(audio_path, context=context or None)
+        except TypeError:
+            # 老版本的 mlx-qwen3-asr 可能没有 context 参数，降级为无偏置
+            log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
+            result = self._session.transcribe(audio_path)
 
         text = extract_text(result)
         if not text.strip():
@@ -141,3 +151,20 @@ class Transcriber:
             )
 
         return ASRResult(text=text, language=getattr(result, "language", None))
+
+    # ---------------------------------------------------------- 对外接口
+
+    def warmup(self) -> None:
+        """在服务启动时预热，避免第一次听写卡住好几秒。"""
+        self._executor.submit(self._ensure_loaded).result()
+
+    def transcribe(self, audio_path: str, *, context: str = "") -> ASRResult:
+        """同步调用（自检脚本用）。仍然走那个专用线程。"""
+        return self._executor.submit(self._run, audio_path, context).result()
+
+    async def transcribe_async(self, audio_path: str, *, context: str = "") -> ASRResult:
+        """异步调用（HTTP 服务用）。推理不会阻塞事件循环。"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._run, audio_path, context
+        )

@@ -123,6 +123,12 @@ TextInjector       写剪贴板 → 合成 Cmd+V → 还原剪贴板
 拆成两个进程是因为模型在 Python/MLX 里，而全局快捷键和文字注入必须用原生
 macOS API。HTTP 只走 127.0.0.1。
 
+**MLX 的线程亲和性**：GPU stream 是线程局部的，在 A 线程加载模型、到 B 线程
+推理会直接抛 `There is no Stream(gpu, 1) in current thread.`。所以模型加载和
+每次推理都固定在同一个专用线程上（`max_workers=1` 的执行器），既不阻塞事件
+循环，也满足亲和性。用 `asyncio.to_thread` 会踩中这个坑，而且症状极具迷惑性 ——
+命令行直接调模型正常，HTTP 服务每次 500。`test_thread_affinity.py` 锁住了这条。
+
 App 启动时先探一次 `/health`：已经有服务在跑就直接接管，否则自己拉起一个，
 退出时只关自己启的那个。
 
@@ -332,7 +338,7 @@ Apple Silicon runner 上的 Swift 编译 + bundle 校验、shellcheck。
 
 ## 状态
 
-**早期原型。** Python 侧 55 个测试覆盖，Swift 侧由 CI 在 Apple Silicon runner
+**早期原型。** Python 侧 60 个测试覆盖，Swift 侧由 CI 在 Apple Silicon runner
 上编译验证。但**完整的录音 → 转写 → 注入流程还没在真机上端到端跑过** ——
 权限授予、真实模型推理、剪贴板注入在各 App 里的行为，这几段需要人工验证。
 
