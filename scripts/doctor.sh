@@ -57,6 +57,32 @@ if [ -x "$BIN" ]; then
     fi
 fi
 
+# App 自己写的状态。「按快捷键完全没反应」在终端里本来是不可见的 ——
+# 权限有没有、监听装没装上、听的是哪个键，只有 App 知道，而它连窗口都没有。
+section "App 自报状态"
+STATUS="$LOGS/app_status.json"
+if [ -f "$STATUS" ]; then
+    age=$(( $(date +%s) - $(stat -f %m "$STATUS") ))
+    if [ "$age" -gt 30 ]; then
+        echo "⚠️  状态是 ${age} 秒前写的 —— App 多半没在运行"
+        echo "   打开它：open /Applications/MixDictate.app"
+    else
+        echo "App 在运行（状态 ${age} 秒前刷新）"
+    fi
+    cat "$STATUS"
+    if grep -q '"accessibility" : false' "$STATUS" 2>/dev/null; then
+        echo
+        echo "⚠️  没有辅助功能权限 —— 按键事件根本到不了 App，快捷键必然毫无反应"
+        echo "   1. 系统设置 › 隐私与安全性 › 辅助功能，把 MixDictate 那条用 − 删掉"
+        echo "   2. ./scripts/permissions.sh reset"
+        echo "   3. 重新用 + 把 /Applications/MixDictate.app 加回去并打开开关"
+        echo "   （删掉再加回来是关键：开关看着是开的但记录已经失效，只关再开没用）"
+    fi
+else
+    echo "还没有状态文件。App 没跑过，或者装的是旧版本。"
+    echo "  open /Applications/MixDictate.app"
+fi
+
 section "安装状态"
 [ -d "$APP" ]; echo "App 已安装（/Applications）  $(yes_no $?)"
 [ -x "$VENV/bin/python" ]; echo "Python 环境已建立            $(yes_no $?)"

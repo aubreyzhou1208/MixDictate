@@ -51,6 +51,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installHotKeyMonitor()
         startConfigWatch()
+        writeStatusFile()
+    }
+
+    // MARK: - 给终端看的状态文件
+
+    /// 把 App 自己的内部状态写到磁盘上，让 doctor.sh 能读到。
+    ///
+    /// 「按 Option 完全没反应」这件事在终端里是彻底不可见的：辅助功能权限有没有、
+    /// 监听装没装上、监听的是哪个键、App 还活着没有 —— 这些只有 App 自己知道，
+    /// 而它偏偏是个连窗口都没有的菜单栏程序。没有这份文件就只能靠猜，
+    /// 而我已经猜错过好几次了。
+    ///
+    /// 文件的**修改时间**本身也是信息：过期了就说明 App 根本没在跑。
+    private func writeStatusFile() {
+        let micStatus: String
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: micStatus = "authorized"
+        case .denied: micStatus = "denied"
+        case .restricted: micStatus = "restricted"
+        case .notDetermined: micStatus = "notDetermined"
+        @unknown default: micStatus = "unknown"
+        }
+
+        let payload: [String: Any] = [
+            "pid": ProcessInfo.processInfo.processIdentifier,
+            "accessibility": TextInjector.hasAccessibilityPermission,
+            "microphone": micStatus,
+            "hotkeyKeyCode": Int(config.pushToTalkKeyCode),
+            "hotkeyName": HotKeyMonitor.displayName(for: config.pushToTalkKeyCode),
+            "hotkeyMonitorInstalled": monitor != nil,
+            "state": String(describing: state),
+            "lastError": lastError ?? "",
+            "appPath": Bundle.main.bundleURL.path,
+        ]
+
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]
+        ) else { return }
+
+        let url = ServerProcess.supportDirectory
+            .appendingPathComponent("logs/app_status.json")
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try? data.write(to: url, options: .atomic)
     }
 
     // MARK: - 配置热加载
@@ -67,6 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func reloadConfigIfChanged() {
+        // 每次心跳都刷一遍：内容基本不变，但修改时间会更新 ——
+        // doctor.sh 靠它判断 App 是不是还活着
+        writeStatusFile()
+
         // 录音中途换配置只会制造混乱，等空闲了再说
         guard state == .idle || state == .failed else { return }
 
@@ -130,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installHotKeyMonitor()
         buildMenu()
         state = .idle
+        writeStatusFile()
 
         let alert = NSAlert()
         alert.messageText = "辅助功能权限已生效"
