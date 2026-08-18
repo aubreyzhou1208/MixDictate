@@ -1,0 +1,26 @@
+[project]
+name = "mixdictate-server"
+version = "0.1.0"
+description = "MixDictate 本地转写服务：mlx-qwen3-asr + 热词偏置 + 中英混排后处理"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# mlx 只能装在 Apple Silicon 上，所以拆成可选依赖，
+# 这样 CI 和非 Mac 机器仍然能跑后处理的单元测试。
+mlx = ["mlx-qwen3-asr>=0.1"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+mixdictate-server = "mixdictate_server.main:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mixdictate_server*"]

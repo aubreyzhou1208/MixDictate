@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Swift / Xcode
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+build/
+*.app/
+
+# 模型权重绝不入库（Qwen3-ASR-0.6B 就超过 1GB，GitHub 单文件上限 100MB）
+models/
+*.safetensors
+*.gguf
+*.bin
+*.npz
+
+# 录音样本 / 私人数据
+samples/
+*.wav
+*.m4a
+*.mp3
+!tests/fixtures/*.wav
+
+# 本地配置与密钥
+.env
+config/config.json
+config/hotwords.local.txt
+
+# macOS
+.DS_Store

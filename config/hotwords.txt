@@ -1,0 +1,53 @@
+# MixDictate 热词表
+#
+# 一行一个词。这个表有两个作用：
+#   1. 作为 context 喂给 Qwen3-ASR，让它更容易听出这些词
+#   2. 转写完成后统一大小写 / 强制纠正
+#
+# 别名语法（听错的写法 => 正确的写法）：
+#   咖啡内特斯 => Kubernetes
+#
+# 改完直接保存，服务会自动重载，不用重启。
+
+# ---- 技术术语（中英混说最容易出错的部分）----
+Kubernetes
+Docker
+GitHub
+TypeScript
+JavaScript
+Python
+Swift
+PostgreSQL
+Supabase
+Redis
+Nginx
+API
+SDK
+CLI
+UI
+UX
+PR
+CI/CD
+latency
+pipeline
+endpoint
+webhook
+schema
+prompt
+token
+embedding
+LLM
+
+# ---- 常见听错的写法 ----
+k8s => Kubernetes
+K8S => Kubernetes
+Github => GitHub
+github => GitHub
+Api => API
+Ui => UI
+拍森 => Python
+道客 => Docker
+瑞迪斯 => Redis
+
+# ---- 在这里加你自己的：人名、项目名、公司名 ----
+MixDictate
