@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 每次听写一个编号。取消时 +1，在飞的请求回来发现编号变了就丢弃 ——
     /// 不这样的话，取消之后一两秒，那句话还是会自己蹦进输入框。
     private var sessionID = 0
+
+    /// 最近一次听写录到的最大响度。写进状态文件给 verify.sh 看 ——
+    /// "采集是不是全零"这件事骗过我好几轮，必须变成一个能从终端读到的数字。
+    private var lastCapturePeak: Float = -1
     private let recorder = AudioRecorder()
     private var config = Config.load()
     private var server: ServerProcess!
@@ -92,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "hotkeyMonitorInstalled": monitor != nil,
             "echoCancellation": recorder.echoCancellationActive,
             "inputFormat": recorder.inputFormatDescription,
+            "lastCapturePeak": lastCapturePeak,
             "state": String(describing: state),
             "lastError": lastError ?? "",
             "appPath": Bundle.main.bundleURL.path,
@@ -680,6 +685,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         stopPartialUpdates()
         stopEscapeWatch()
+        lastCapturePeak = recorder.loudestLevel
+        writeStatusFile()
 
         guard let audio = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
             // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从

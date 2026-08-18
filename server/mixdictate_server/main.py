@@ -106,6 +106,10 @@ def health() -> dict:
         "hotwords": len(current_hotwords().terms),
         # App 靠这个找到热词表 —— .app 启动时工作目录是 "/"，自己猜不出来
         "hotwords_path": str(HOTWORDS_PATH.resolve()),
+        # 服务活着 ≠ 模型能用了。首次启动要下载权重，中间那几分钟
+        # /health 是通的但转写会一直排队 —— 这两件事必须分开报。
+        "model_loaded": transcriber.is_loaded,
+        "warmed": transcriber.warmed_at > 0,
         "pid": os.getpid(),
         "started_at": STARTED_AT.strftime("%Y-%m-%d %H:%M:%S"),
         "saves_audio": SAVE_AUDIO,

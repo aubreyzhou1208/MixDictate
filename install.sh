@@ -124,7 +124,13 @@ fi
 # 列表里就是找不到它，只能手动点 + 号翻文件夹。
 step "启动 MixDictate"
 open "$INSTALLED"
-sleep 2
+sleep 4
+
+# 装完自动复查一遍那些犯过的错。**不能靠人记得去跑** —— 之前失败的
+# 那一环恰恰就是"记得去查"。清单只有自动执行才有意义。
+# 复查不通过不算安装失败（App 已经装好了），所以不让它中断脚本。
+step "复查"
+"$ROOT/scripts/verify.sh" || true
 
 step "完成"
 

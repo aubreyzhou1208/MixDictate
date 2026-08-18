@@ -116,6 +116,12 @@ do_run() {
     if ./install.sh; then
         rm -f "$PENDING"
         say "更新完成：${remote_sha:0:7}"
+        # install.sh 里已经跑过一遍 verify.sh，这里再跑一次只为拿退出码：
+        # 自动更新是无人值守的，回归了必须主动说，不能等用户下次用坏了才发现
+        if ! ./scripts/verify.sh >/dev/null 2>&1; then
+            say "复查没通过，跑 ./scripts/verify.sh 看详情"
+            notify "更新装好了，但复查没通过"
+        fi
         notify "已更新到 ${remote_sha:0:7}"
     else
         say "install.sh 失败，旧版本保持不变"

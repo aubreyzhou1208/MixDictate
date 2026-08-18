@@ -173,6 +173,12 @@ class Transcriber:
 
     # ---------------------------------------------------------- 对外接口
 
+    @property
+    def is_loaded(self) -> bool:
+        """权重进内存了没有。/health 报出去 —— 「服务活着」和「模型能用了」
+        是两回事，首次启动要下载模型，中间那几分钟服务是活的但转不了。"""
+        return self._mock or self._session is not None
+
     def warmup(self) -> None:
         """预热：加载模型 **并且真的跑几次推理**。
 
