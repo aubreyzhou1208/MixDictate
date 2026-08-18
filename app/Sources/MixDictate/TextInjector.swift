@@ -77,7 +77,7 @@ enum TextInjector {
 
         // 给一点时间：用户刚松开说话键，修饰键状态需要先落定，
         // 否则合成的 Cmd+V 可能被残留的 Option 污染成别的快捷键。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
             postPaste()
 
             // 粘贴是异步的，等目标 App 真正读完剪贴板再还原

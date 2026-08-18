@@ -16,6 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 只会让松手后的最终结果排在后面等更久。
     private var partialInFlight = false
     private var permissionTimer: Timer?
+    private var configTimer: Timer?
+    private var configStamp: Date?
+    /// 上一次中间结果对应的音频大小和文字。松手时如果音频几乎没再增长，
+    /// 就直接用它当最终结果，省掉一整次推理。
+    private var lastPartialBytes = 0
+    private var lastPartialText = ""
     /// 连续多少次检测到静音。第一次检测时用户往往还没开口，
     /// 立刻报「没有听到声音」是误报。
     private var silentTicks = 0
@@ -43,6 +49,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in await startServer() }
 
         installHotKeyMonitor()
+        startConfigWatch()
+    }
+
+    // MARK: - 配置热加载
+
+    /// 盯着配置文件的修改时间。命令行改完要能立刻生效 ——
+    /// 菜单栏图标经常被刘海挤掉找不到，而 Cmd+, 对菜单栏 App 不响应，
+    /// 命令行是很多人唯一能用的入口。
+    private func startConfigWatch() {
+        configStamp = Config.modificationDate()
+        configTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.reloadConfigIfChanged() }
+        }
+    }
+
+    private func reloadConfigIfChanged() {
+        // 录音中途换配置只会制造混乱，等空闲了再说
+        guard state == .idle || state == .failed else { return }
+
+        let stamp = Config.modificationDate()
+        guard stamp != configStamp else { return }
+        configStamp = stamp
+
+        let previousKey = config.pushToTalkKeyCode
+        let previousModel = config.model
+        config = Config.load()
+
+        if config.pushToTalkKeyCode != previousKey {
+            installHotKeyMonitor()
+        }
+        buildMenu()
+        NSLog("MixDictate: 配置已重新加载")
+
+        if config.model != previousModel {
+            restartServer()
+        }
     }
 
     // MARK: - 辅助功能权限
@@ -179,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor?.stop()
         stopPartialUpdates()
         permissionTimer?.invalidate()
+        configTimer?.invalidate()
         server?.stop()
     }
 
@@ -253,6 +297,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             silentTicks = 0
+            lastPartialBytes = 0
+            lastPartialText = ""
             liveInserter.reset()
             state = .recording
             if config.showLiveOverlay {
@@ -300,7 +346,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 的 4.5 倍，GPU 全被中间请求占着，松手后的结果反而要排队。
     /// 让间隔跟着已录时长增长，把额外开销压在可控范围内。
     private func nextPartialDelay() -> TimeInterval {
-        max(config.partialIntervalSeconds, recorder.capturedSeconds * 0.5)
+        // 上一版写的是 max(基础间隔, 已录时长 × 0.5)，调过头了 ——
+        // 说到 10 秒时下一次刷新要等 5 秒，用起来像卡住了。
+        // 现在增长更缓，并且封顶，保证最慢也是 2.5 秒刷一次。
+        let scaled = recorder.capturedSeconds * 0.25
+        return min(2.5, max(config.partialIntervalSeconds, scaled))
     }
 
     private func stopPartialUpdates() {
@@ -324,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard !partialInFlight, let wav = recorder.snapshotWAV() else { return }
 
+        let snapshotBytes = wav.count
         partialInFlight = true
         let client = TranscriptionClient(config: config)
 
@@ -343,6 +394,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard state == .recording else { return }
             // 空结果别覆盖掉「没有听到声音」那条提示
             guard !text.isEmpty else { return }
+
+            lastPartialBytes = snapshotBytes
+            lastPartialText = text
 
             if config.liveInsertion {
                 liveInserter.update(to: text)
@@ -368,6 +422,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // 松手时音频若比最后一次中间结果几乎没长（0.4 秒以内），那次的文字
+        // 就已经是最终结果了。再跑一次推理纯属重复劳动，而松手之后的等待
+        // 恰恰是整个流程里最难受的一段。
+        let grownBytes = wav.count - lastPartialBytes
+        if !lastPartialText.isEmpty, grownBytes < Self.reusePartialThresholdBytes {
+            NSLog("MixDictate: 音频未再增长，直接用最后一次中间结果")
+            deliver(lastPartialText)
+            return
+        }
+
         state = .transcribing
         overlay.update("整理中…", isFinal: false)
         let client = TranscriptionClient(config: config)
@@ -384,39 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     state = .idle
                     return
                 }
-
-                // 实时写入模式：文字早就在输入框里了，这里只要把它改成
-                // 最终版本 —— 不用再粘贴一次，那正是"还要再复制一遍"的慢感来源
-                if config.liveInsertion {
-                    liveInserter.update(to: text)
-                    overlay.hide()
-                    state = .idle
-                    return
-                }
-
-                // 先把最终结果显示出来，用户能看到它跟中间结果差在哪
-                overlay.update(text, isFinal: true)
-
-                switch TextInjector.insert(text, method: config.resolvedInsertionMethod) {
-                case .inserted(let method):
-                    NSLog("MixDictate: 已通过 %@ 插入", method.rawValue)
-                    overlay.hide(after: 1.2)
-                case .insertedViaAccessibility:
-                    // 安全输入模式挡住了合成按键，但辅助功能接口写进去了
-                    NSLog("MixDictate: 安全输入模式，已改走辅助功能接口")
-                    overlay.hide(after: 1.2)
-                case .needsAccessibility:
-                    overlay.hide()
-                    reportAccessibilityMissing()
-                case .blockedBySecureInput:
-                    // 三条路都走不通。文字已经在剪贴板里了。
-                    overlay.update(
-                        "有 App 开着安全输入模式，自动输入被系统拦截。文字已复制，按 Cmd+V 粘贴",
-                        isFinal: true
-                    )
-                    overlay.hide(after: 5)
-                }
-                state = .idle
+                deliver(text)
             } catch {
                 // 错误必须显示在浮层上。只写进菜单栏图标是不够的 ——
                 // 菜单栏图标多了会被刘海挤掉，用户根本看不见，
@@ -426,6 +458,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 fail(error.localizedDescription)
             }
         }
+    }
+
+    /// 0.4 秒的 16kHz 单声道 16 位音频。低于这个增量就认为内容没变。
+    private static let reusePartialThresholdBytes = 12_800
+
+    /// 把最终文字送到该去的地方。两条路都会走到这里：正常转写完，
+    /// 或者直接复用最后一次中间结果。
+    private func deliver(_ text: String) {
+        // 实时写入模式：文字早就在输入框里了，这里只要把它改成最终版本 ——
+        // 不用再粘贴一次，那正是"还要再复制一遍"的慢感来源
+        if config.liveInsertion {
+            liveInserter.update(to: text)
+            overlay.hide()
+            state = .idle
+            return
+        }
+
+        // 先把最终结果显示出来，用户能看到它跟中间结果差在哪
+        overlay.update(text, isFinal: true)
+
+        switch TextInjector.insert(text, method: config.resolvedInsertionMethod) {
+        case .inserted(let method):
+            NSLog("MixDictate: 已通过 %@ 插入", method.rawValue)
+            overlay.hide(after: 1.2)
+        case .insertedViaAccessibility:
+            // 安全输入模式挡住了合成按键，但辅助功能接口写进去了
+            NSLog("MixDictate: 安全输入模式，已改走辅助功能接口")
+            overlay.hide(after: 1.2)
+        case .needsAccessibility:
+            overlay.hide()
+            reportAccessibilityMissing()
+        case .blockedBySecureInput:
+            // 三条路都走不通。文字已经在剪贴板里了。
+            overlay.update(
+                "有 App 开着安全输入模式，自动输入被系统拦截。文字已复制，按 Cmd+V 粘贴",
+                isFinal: true
+            )
+            overlay.hide(after: 5)
+        }
+        state = .idle
     }
 
     /// 缺辅助功能权限是"按了没反应"最常见的原因。给一个能直接跳到

@@ -38,6 +38,13 @@ struct Config {
         .homeDirectoryForCurrentUser
         .appendingPathComponent(".config/mixdictate/config.json")
 
+    /// 配置文件的修改时间。App 靠它发现外部改动 —— 菜单栏图标常常
+    /// 找不到，命令行改配置必须能立刻生效。
+    static func modificationDate() -> Date? {
+        try? FileManager.default
+            .attributesOfItem(atPath: path.path)[.modificationDate] as? Date
+    }
+
     static func load() -> Config {
         guard let data = try? Data(contentsOf: path) else { return Config() }
         return (try? JSONDecoder().decode(Config.self, from: data)) ?? Config()
