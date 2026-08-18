@@ -68,6 +68,17 @@ def test_health_reports_hotword_path(client):
     assert body["hotwords_path"].endswith("hotwords.txt")
 
 
+def test_health_reports_identity_for_staleness_checks(client):
+    """残留的旧服务会被新 App 直接接管，光看「服务在跑」分辨不出来。
+
+    启动时刻和进程号能一眼看出跑着的是不是刚装的那份代码。
+    """
+    body = client.get("/health").json()
+    assert body["pid"] > 0
+    assert len(body["started_at"]) == 19  # YYYY-MM-DD HH:MM:SS
+    assert "saves_audio" in body
+
+
 # ------------------------------------------------------------ 转写链路
 
 def test_code_switching_sentence(client):

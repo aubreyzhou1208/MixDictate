@@ -54,6 +54,10 @@ section "服务健康检查"
 health="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" 2>&1)"
 if [ -n "$health" ]; then
     echo "$health"
+    echo
+    echo "started_at 比你最近一次 ./install.sh 还早，说明跑的是残留的旧服务，"
+    echo "新代码没生效。这样解决："
+    echo "  pkill -f mixdictate_server; pkill -x MixDictate; open -a MixDictate"
 else
     echo "连不上 http://127.0.0.1:${PORT}/health"
 fi

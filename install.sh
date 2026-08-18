@@ -90,9 +90,16 @@ step "编译 App"
 
 step "安装到「应用程序」"
 
+# 旧版本还开着的话先关掉，否则复制会失败。
+#
+# 转写服务必须一起杀掉：App 退出时本该顺带关掉它，但只要有一次没关干净，
+# 新 App 启动时就会探测到这个残留服务并直接接管（那是为了避免端口冲突
+# 特意写的逻辑）—— 结果服务端代码更新了却永远不生效，而且毫无征兆。
+pkill -x "$APP_NAME" 2>/dev/null || true
+pkill -f mixdictate_server 2>/dev/null || true
+sleep 1
+
 if [ -d "$INSTALLED" ]; then
-    # 旧版本还开着的话先关掉，否则复制会失败
-    pkill -x "$APP_NAME" 2>/dev/null || true
     rm -rf "$INSTALLED"
 fi
 cp -R "$ROOT/build/$APP_NAME.app" "$INSTALLED"

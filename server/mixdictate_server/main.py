@@ -35,6 +35,9 @@ PORT = int(os.environ.get("MIXDICTATE_PORT", 8765))
 # 把最后一次正式转写的音频留一份，方便排查"模型没听出来"到底是音频的问题
 # 还是模型的问题。只留最新一份，会被反复覆盖。设成 0 可以关掉。
 SAVE_AUDIO = os.environ.get("MIXDICTATE_SAVE_AUDIO", "1") == "1"
+# 服务启动的时刻。排错时用来判断跑着的到底是不是刚装的那份代码 ——
+# 残留的旧服务会被新 App 直接接管，光看「服务在跑」看不出这一点。
+STARTED_AT = datetime.now()
 
 transcriber = Transcriber(model=MODEL)
 _hotwords = HotwordTable.load(HOTWORDS_PATH)
@@ -104,6 +107,9 @@ def health() -> dict:
         "hotwords": len(current_hotwords().terms),
         # App 靠这个找到热词表 —— .app 启动时工作目录是 "/"，自己猜不出来
         "hotwords_path": str(HOTWORDS_PATH.resolve()),
+        "pid": os.getpid(),
+        "started_at": STARTED_AT.strftime("%Y-%m-%d %H:%M:%S"),
+        "saves_audio": SAVE_AUDIO,
     }
 
 
