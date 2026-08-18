@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 
 /// 把文字送进当前光标所在的输入框。
 ///

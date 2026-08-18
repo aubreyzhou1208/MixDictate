@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitor: HotKeyMonitor?
@@ -158,10 +159,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 热词表路径向服务端要，不能自己猜。
+    /// .app 通过 Finder / open 启动时工作目录是 "/"，任何基于 cwd 的相对路径都会落空。
     @objc private func openHotwords() {
-        let path = ProcessInfo.processInfo.environment["MIXDICTATE_HOTWORDS"]
-            ?? FileManager.default.currentDirectoryPath + "/config/hotwords.txt"
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        Task { @MainActor in
+            var request = URLRequest(url: config.healthURL)
+            request.timeoutInterval = 3
+            guard
+                let (data, _) = try? await URLSession.shared.data(for: request),
+                let health = try? JSONDecoder().decode(HealthResponse.self, from: data),
+                let path = health.hotwordsPath
+            else {
+                let alert = NSAlert()
+                alert.messageText = "拿不到热词表路径"
+                alert.informativeText = "转写服务没在跑。先执行 make server。"
+                alert.runModal()
+                return
+            }
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
     }
 
     @objc private func checkServer() {
@@ -171,8 +187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let alert = NSAlert()
             do {
                 let (data, _) = try await URLSession.shared.data(for: request)
+                let health = try JSONDecoder().decode(HealthResponse.self, from: data)
                 alert.messageText = "服务正常"
-                alert.informativeText = String(data: data, encoding: .utf8) ?? ""
+                alert.informativeText = """
+                    模型：\(health.model)
+                    热词：\(health.hotwords) 条
+                    """
             } catch {
                 alert.messageText = "连不上服务"
                 alert.informativeText = "先在项目目录里运行 make server"

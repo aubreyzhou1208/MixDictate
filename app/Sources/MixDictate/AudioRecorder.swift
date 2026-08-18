@@ -14,6 +14,10 @@ final class AudioRecorder {
     private var pcm = Data()
     private var startedAt: Date?
 
+    /// tap 回调跑在实时音频线程上，stop() 在主线程读同一个缓冲区 ——
+    /// 没有锁就是数据竞争，表现为偶发的截断或崩溃。
+    private let pcmLock = NSLock()
+
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
@@ -26,7 +30,10 @@ final class AudioRecorder {
     func start() throws {
         guard !isRecording else { return }
 
+        pcmLock.lock()
         pcm.removeAll(keepingCapacity: true)
+        pcmLock.unlock()
+
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0 else { throw RecorderError.noInputDevice }
@@ -55,8 +62,12 @@ final class AudioRecorder {
         let duration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
 
-        guard duration >= minimumDuration, !pcm.isEmpty else { return nil }
-        return Self.makeWAV(pcm: pcm, sampleRate: 16_000, channels: 1)
+        pcmLock.lock()
+        let captured = pcm
+        pcmLock.unlock()
+
+        guard duration >= minimumDuration, !captured.isEmpty else { return nil }
+        return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
     }
 
     // MARK: - 重采样
@@ -73,7 +84,7 @@ final class AudioRecorder {
         // 输入块只能供一次数据，第二次要报 .noDataNow，否则 convert 会一直等
         var delivered = false
         var conversionError: NSError?
-        converter.convert(to: out, error: &conversionError) { _, status in
+        _ = converter.convert(to: out, error: &conversionError) { _, status in
             if delivered {
                 status.pointee = .noDataNow
                 return nil
@@ -89,9 +100,11 @@ final class AudioRecorder {
         else { return }
 
         let byteCount = Int(out.frameLength) * MemoryLayout<Int16>.size
+        pcmLock.lock()
         channel[0].withMemoryRebound(to: UInt8.self, capacity: byteCount) { bytes in
             pcm.append(bytes, count: byteCount)
         }
+        pcmLock.unlock()
     }
 
     // MARK: - WAV 封装

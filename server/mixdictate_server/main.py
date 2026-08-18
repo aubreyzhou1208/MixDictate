@@ -66,7 +66,13 @@ app = FastAPI(title="MixDictate", docs_url=None, redoc_url=None, lifespan=lifesp
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "model": MODEL, "hotwords": len(current_hotwords().terms)}
+    return {
+        "ok": True,
+        "model": MODEL,
+        "hotwords": len(current_hotwords().terms),
+        # App 靠这个找到热词表 —— .app 启动时工作目录是 "/"，自己猜不出来
+        "hotwords_path": str(HOTWORDS_PATH.resolve()),
+    }
 
 
 @app.post("/transcribe")

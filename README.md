@@ -15,7 +15,9 @@ MixDictate 输出      这个 pipeline 的 latency 有点高，我们要不要�
 
 ## 状态
 
-**早期原型。** Python 服务端已完整测试通过；Swift 端代码完整但**尚未在真机编译验证过**，第一次构建可能需要小修。
+**早期原型。** Python 服务端有 27 个测试覆盖；Swift 端由 CI 在 Apple Silicon runner 上编译验证，
+但**完整的录音 → 转写 → 注入流程还没在真机上端到端跑过** —— 麦克风、辅助功能权限、
+真实模型推理这几段需要人工验证。
 
 ## 环境要求
 
@@ -109,12 +111,32 @@ TextInjector       写剪贴板 → 合成 Cmd+V → 还原剪贴板
 
 更准但更慢的模型：`MIXDICTATE_MODEL=Qwen/Qwen3-ASR-1.7B make server`
 
+## 开机自启
+
+```bash
+./scripts/autostart.sh install     # 装 launchd agent（服务 + App）
+./scripts/autostart.sh status      # 看运行状态
+./scripts/autostart.sh uninstall   # 卸掉
+```
+
+plist 在安装时按当前仓库路径生成，所以**仓库挪了位置要重新跑一次 install**。
+日志在 `~/Library/Logs/mixdictate/`。
+
+开机后菜单栏图标会比登录晚几秒出现 —— 那几秒在加载模型。
+
 ## 开发
 
 ```bash
-make test         # 后处理单元测试，不需要模型，任何平台都能跑
+make test         # 全部测试，不需要模型，任何平台都能跑
 make server-mock  # 不加载模型空跑服务，用来验证 App→服务链路
 ```
+
+测试分两层：`test_postprocess.py` 测纯函数，`test_server.py` 用 mock 后端
+走完整 HTTP 链路（multipart → 热词 → 后处理 → JSON）。两层都不需要 mlx，
+所以 CI 在 Linux 上就能跑。
+
+CI（`.github/workflows/ci.yml`）跑三个 job：Python 测试（3.10 / 3.12）、
+Apple Silicon runner 上的 Swift 编译 + bundle 校验、shellcheck。
 
 ## 排错
 

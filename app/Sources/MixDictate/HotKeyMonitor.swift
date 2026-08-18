@@ -10,13 +10,29 @@ final class HotKeyMonitor {
     private var isDown = false
 
     private let keyCode: UInt16
+    private let trackedFlag: NSEvent.ModifierFlags
     private let onPress: () -> Void
     private let onRelease: () -> Void
 
     init(keyCode: UInt16, onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
         self.keyCode = keyCode
+        self.trackedFlag = Self.flag(for: keyCode)
         self.onPress = onPress
         self.onRelease = onRelease
+    }
+
+    /// 每个修饰键对应哪个 flag。必须按键区分，不能笼统看"有没有修饰键按着" ——
+    /// 否则用户按着 Command 再按右 Option 时，松开右 Option 的那一刻
+    /// modifierFlags 里仍留着 .command，会被误判成"还按着"，录音就永远停不下来。
+    private static func flag(for keyCode: UInt16) -> NSEvent.ModifierFlags {
+        switch keyCode {
+        case 58, 61: return .option    // 左 / 右 Option
+        case 54, 55: return .command   // 右 / 左 Command
+        case 59, 62: return .control   // 左 / 右 Control
+        case 56, 60: return .shift     // 左 / 右 Shift
+        case 63:     return .function
+        default:     return .option
+        }
     }
 
     func start() {
@@ -40,11 +56,9 @@ final class HotKeyMonitor {
     private func handle(_ event: NSEvent) {
         guard event.keyCode == keyCode else { return }
 
-        // 修饰键按下时对应的 flag 会出现在 modifierFlags 里，松开时消失。
-        // 用 deviceIndependentFlagsMask 过滤掉底层的左右键区分位。
-        let active = !event.modifierFlags
+        let active = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
-            .isEmpty
+            .contains(trackedFlag)
 
         if active, !isDown {
             isDown = true

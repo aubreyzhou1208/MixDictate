@@ -13,6 +13,18 @@ struct TranscriptionResponse: Decodable {
     }
 }
 
+struct HealthResponse: Decodable {
+    let ok: Bool
+    let model: String
+    let hotwords: Int
+    let hotwordsPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, model, hotwords
+        case hotwordsPath = "hotwords_path"
+    }
+}
+
 enum TranscriptionError: LocalizedError {
     case serverUnreachable
     case server(String)
