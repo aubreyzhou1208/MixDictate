@@ -48,6 +48,20 @@ final class AudioRecorder {
     /// 按响度切一刀，就能把绝大部分漏音挡在外面。
     var voiceThreshold: Float = 0.05
 
+    /// 送给模型之前，把内部静音压到最长这么久（秒）。0 = 不压。
+    ///
+    /// 这是"我一停顿它就给我加个句号"的解法。模型判断句子有没有说完，
+    /// 最主要的依据就是停顿有多长 —— 而"想下一句怎么说"和"这句说完了"
+    /// 在音频里是同一件事：一段安静。从声音里根本分不开，之前试过用
+    /// 停顿时长猜，猜错的比猜对的多。
+    ///
+    /// 与其猜，不如把线索本身削掉：把 1.5 秒的思考停顿压成 0.35 秒，
+    /// 模型看到的就只是一个正常的字间空隙，不再有理由断句。顺带音频
+    /// 也变短了，推理更快。
+    ///
+    /// 注意它依赖人声门限 —— 门限把停顿写成真正的静音，这里才认得出来。
+    var maxPauseSeconds: Double = 0.35
+
     /// 门限打开后的剩余保持字节数
     private var holdRemaining = 0
     /// 压在手里还没写出去的那一块，以及当时的判断。见 appendGated 里的前瞻。
@@ -158,10 +172,10 @@ final class AudioRecorder {
         // 空 Data = 录到了但全部已经定稿，尾巴没东西要转。
         let tail = tailPCM.isEmpty
             ? Data()
-            : Self.makeWAV(pcm: tailPCM, sampleRate: 16_000, channels: 1)
+            : Self.makeWAV(pcm: shortenPauses(tailPCM), sampleRate: 16_000, channels: 1)
 
         return (
-            full: Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1),
+            full: Self.makeWAV(pcm: shortenPauses(captured), sampleRate: 16_000, channels: 1),
             tail: tail
         )
     }
@@ -265,7 +279,7 @@ final class AudioRecorder {
         }
 
         return (
-            Self.makeWAV(pcm: pending, sampleRate: 16_000, channels: 1),
+            Self.makeWAV(pcm: shortenPauses(pending), sampleRate: 16_000, channels: 1),
             endOffset,
             boundary
         )
@@ -398,6 +412,56 @@ final class AudioRecorder {
         guard let held = heldChunk else { return }
         heldChunk = nil
         write(held, open: heldOpen, loud: heldLoud)
+    }
+
+    // MARK: - 压短停顿
+
+    /// 把超过 maxPauseSeconds 的静音游程截短到 maxPauseSeconds。
+    ///
+    /// 只动送给模型的那份，不动缓冲区本身 —— committedOffset / lastLoudByte
+    /// 都是按未压缩的偏移算的，动了缓冲区那套坐标全废。
+    private func shortenPauses(_ pcm: Data) -> Data {
+        let maxRunBytes = Int(maxPauseSeconds * 16_000) * 2
+        guard maxRunBytes > 0 else { return pcm }
+        return Self.compressSilence(pcm, maxRunBytes: maxRunBytes)
+    }
+
+    /// 低于这个幅度就算静音。对应 noiseFloor（0.01）。
+    /// 门限开着时停顿是精确的零，这个阈值顺带也能认出没开门限时的安静环境。
+    private static let silenceCeiling = UInt16(Float(Int16.max) * noiseFloor)
+
+    private static func compressSilence(_ pcm: Data, maxRunBytes: Int) -> Data {
+        let maxRunSamples = maxRunBytes / 2
+        let total = pcm.count / 2
+        guard maxRunSamples > 0, total > maxRunSamples else { return pcm }
+
+        var out = Data(capacity: pcm.count)
+        pcm.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            let samples = raw.bindMemory(to: Int16.self)
+            guard let base = samples.baseAddress else { return }
+
+            // 按"静音/有声"分游程，静音游程超长就只写前 maxRunSamples 个。
+            func emit(from start: Int, to end: Int, silent: Bool) {
+                let count = silent ? min(end - start, maxRunSamples) : end - start
+                guard count > 0 else { return }
+                out.append(UnsafeBufferPointer(start: base + start, count: count))
+            }
+
+            var runStart = 0
+            var runIsSilent = samples[0].magnitude <= silenceCeiling
+            var index = 1
+            while index < total {
+                let silent = samples[index].magnitude <= silenceCeiling
+                if silent != runIsSilent {
+                    emit(from: runStart, to: index, silent: runIsSilent)
+                    runStart = index
+                    runIsSilent = silent
+                }
+                index += 1
+            }
+            emit(from: runStart, to: total, silent: runIsSilent)
+        }
+        return out
     }
 
     // MARK: - WAV 封装

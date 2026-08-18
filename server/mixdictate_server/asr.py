@@ -22,6 +22,21 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "Qwen/Qwen3-ASR-0.6B"
 
+# 冷启动预热要跑的几个音频长度（秒）。
+#
+# 为什么不是一个：MLX 的 Metal 计算核是**按张量形状**编译的，而输入长度
+# 直接决定形状。只用一个 0.6 秒的样本预热，编出来的核只服务于 0.6 秒左右
+# 的输入 —— 用户真正说的那句两三秒的话仍然要现编一次。用户的原话是
+# 「用的次数越多它反应越快」，说的就是这个：每碰到一个新长度就多编一批核，
+# 编过的越多、撞上缓存的概率越大。
+#
+# 所以预热要覆盖常见的几档长度，把这笔开销在启动时一次付清。
+COLD_WARMUP_SECONDS = (0.8, 2.5, 6.0)
+
+# 闲置后的重热只要一档就够 —— 核已经编好了，这里要的只是把权重和
+# 上下文重新拉回热状态，跑满三档纯属浪费电。
+STALE_WARMUP_SECONDS = (1.2,)
+
 
 def extract_text(result: object) -> str:
     """从模型返回值里取出转写文本。
@@ -159,37 +174,44 @@ class Transcriber:
     # ---------------------------------------------------------- 对外接口
 
     def warmup(self) -> None:
-        """预热：加载模型 **并且真的跑一次推理**。
+        """预热：加载模型 **并且真的跑几次推理**。
 
         只加载权重是不够的 —— MLX 的 Metal 计算核是首次推理时才编译的，
-        不提前跑一遍，那笔开销就会落在用户的第一句话上。用户的原话是
-        「第一次开始的时候非常慢，第二次才好一点」，说的就是这个。
+        不提前跑一遍，那笔开销就会落在用户的第一句话上。而且核是按张量
+        形状编的，所以要跑好几个长度，见 COLD_WARMUP_SECONDS。
         """
-        self._executor.submit(self._warmup_now).result()
+        self._executor.submit(self._warmup_now, COLD_WARMUP_SECONDS).result()
 
-    def _warmup_now(self) -> None:
+    def _warmup_now(
+        self, durations: tuple[float, ...] = COLD_WARMUP_SECONDS
+    ) -> None:
         import tempfile
         from pathlib import Path as _Path
 
         from .audio import warmup_wav
 
         self._ensure_loaded()
-        if self._mock:
-            return
 
-        tmp = ""
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
-                handle.write(warmup_wav())
-                tmp = handle.name
-            self._run(tmp, "")
-            self.warmed_at = time.monotonic()
-            log.info("预热完成（计算核已编译）")
-        except Exception as exc:  # 预热失败不该拦住服务启动
-            log.warning("预热失败，第一次听写可能偏慢：%s", exc)
-        finally:
-            if tmp:
-                _Path(tmp).unlink(missing_ok=True)
+        for seconds in durations:
+            tmp = ""
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+                    handle.write(warmup_wav(seconds))
+                    tmp = handle.name
+                self._run(tmp, "")
+            except Exception as exc:  # 预热失败不该拦住服务启动
+                log.warning("预热失败（%.1f 秒那档），第一次听写可能偏慢：%s",
+                            seconds, exc)
+                break
+            finally:
+                if tmp:
+                    _Path(tmp).unlink(missing_ok=True)
+
+        self.warmed_at = time.monotonic()
+        log.info(
+            "预热完成：%s 秒各跑了一遍（计算核已编译）",
+            "/".join(f"{s:g}" for s in durations),
+        )
 
     def warmup_if_stale(self, max_age_seconds: float = 120.0) -> bool:
         """久没推理就再热一次。
@@ -202,7 +224,7 @@ class Transcriber:
             return False
         if time.monotonic() - self.warmed_at < max_age_seconds:
             return False
-        self._executor.submit(self._warmup_now)
+        self._executor.submit(self._warmup_now, STALE_WARMUP_SECONDS)
         return True
 
     def transcribe(self, audio_path: str, *, context: str = "") -> ASRResult:

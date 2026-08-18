@@ -325,6 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func measureLevel(status: String) async -> Float? {
         do {
             recorder.voiceThreshold = 0
+            recorder.maxPauseSeconds = 0
             try recorder.start(cancelEcho: config.echoCancellation)
         } catch {
             reportFailure(error)
@@ -410,6 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .idle || state == .failed else { return }
         do {
             recorder.voiceThreshold = Float(max(0, min(1, config.voiceThreshold)))
+            recorder.maxPauseSeconds = max(0, config.maxPauseSeconds)
             try recorder.start(cancelEcho: config.echoCancellation)
             silentTicks = 0
             committedText = ""

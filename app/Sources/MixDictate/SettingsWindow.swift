@@ -168,7 +168,24 @@ struct SettingsView: View {
                     Text("低于门限的声音直接丢掉，不送去转写。外放的视频漏进麦克风时\n"
                          + "通常比你说话弱一个数量级，这一刀就能挡住大部分。\n"
                          + "调大更能挡外放，调小小声说话也收得到，0 = 关掉。\n"
+                         + "该设多少不用猜 —— 菜单里有「校准人声门限…」，量两次给建议值。\n"
                          + "想彻底隔绝请戴耳机 —— 声音根本不进麦克风才是真的隔绝。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    HStack {
+                        Text("停顿压到")
+                        Slider(value: $model.config.maxPauseSeconds, in: 0...1.5)
+                        Text(String(format: "%.2fs", model.config.maxPauseSeconds))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                    Text("送给模型前把长停顿压短。模型判断句子说完没有，主要就是看停顿多长，\n"
+                         + "而「在想下一句」和「这句说完了」在音频里是同一件事，分不开。\n"
+                         + "与其猜，不如把线索削掉：调小就更不会在你停顿时乱加句号，\n"
+                         + "调大更尊重你的停顿。0 = 不压。顺带音频变短，转写也更快。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

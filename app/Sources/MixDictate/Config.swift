@@ -30,6 +30,18 @@ struct Config {
     /// 想彻底隔绝还是戴耳机 —— 声音根本不进麦克风，才是真的隔绝。
     var voiceThreshold: Double = 0.05
 
+    /// 送给模型之前把内部静音压到最长这么久（秒）。0 = 不压。
+    ///
+    /// 解的是「我一停顿它就自己加个句号」。模型判断句子说完没有，最主要
+    /// 的依据就是停顿有多长 —— 而「在想下一句」和「这句说完了」在音频里
+    /// 是同一件事：一段安静，分不开。之前试过按停顿时长猜，猜错的比对的多。
+    ///
+    /// 所以不猜，直接把线索削掉：1.5 秒的思考停顿压成 0.35 秒，模型看到的
+    /// 就只是个正常的字间空隙，没理由断句了。顺带音频变短，推理也更快。
+    ///
+    /// 调大 = 更尊重你的停顿（该断的地方还是会断）；调小 = 更不容易乱加句号。
+    var maxPauseSeconds: Double = 0.35
+
     /// 只要模型原文，不做任何加工。
     ///
     /// 打开这个等于把下面所有开关一次性关掉：去语气词、去重复、
@@ -137,6 +149,8 @@ extension Config: Codable {
             ?? fallback.echoCancellation
         voiceThreshold = try c.decodeIfPresent(Double.self, forKey: .voiceThreshold)
             ?? fallback.voiceThreshold
+        maxPauseSeconds = try c.decodeIfPresent(Double.self, forKey: .maxPauseSeconds)
+            ?? fallback.maxPauseSeconds
         rawOutput = try c.decodeIfPresent(Bool.self, forKey: .rawOutput)
             ?? fallback.rawOutput
         collapseRepeats = try c.decodeIfPresent(Bool.self, forKey: .collapseRepeats)
