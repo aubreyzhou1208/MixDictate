@@ -115,6 +115,10 @@ struct TranscriptionClient {
         line("\(raw ? false : config.spokenSymbols)\r\n")
 
         line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"merge_pause_periods\"\r\n\r\n")
+        line("\(raw ? false : config.mergePausePeriods)\r\n")
+
+        line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"partial\"\r\n\r\n")
         line("\(partial)\r\n")
 

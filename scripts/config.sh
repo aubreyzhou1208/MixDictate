@@ -38,6 +38,7 @@ usage() {
   spokenSymbols       true / false   艾特 gmail 点 com → @gmail.com（默认开）
   fullwidthPunctuation true / false  中文标点转全角（默认开，不改内容）
   collapseRepeats     true / false   合并卡壳重复（默认关，容易误删）
+  mergePausePeriods   true / false   停顿处误加的句号降级成逗号（默认开，只改标点不删字）
 
 觉得哪一项在乱改你的话，直接关掉它：
   ./scripts/config.sh set spokenNumbers false

@@ -197,6 +197,53 @@ def to_fullwidth_punct(text: str) -> str:
     return result
 
 
+# ------------------------------------------------- 停顿造成的句号
+
+# 「这句说完了」和「我在想下一句怎么说」在音频里是同一件事：一段安静。
+# 模型判断句子结束主要就看停顿长短，所以口述时经常在思考停顿处断句。
+# 这是声学方案在口述场景下公认的弱点 —— 靠韵律判断标点，对朗读有效，
+# 对口述会误判，因为说话人的停顿本来就不对应标点。
+#
+# 声音里分不开，**文字里常常分得开**：句号后面跟着什么，就是最好的线索。
+# 用右侧上下文回头修正已经打出来的标点，也正是流式标点恢复的思路 ——
+# 边界处做的判断缺右文，等右文到了再改。
+#
+# 这一步只把句号降级成逗号，**绝不删字**。删掉的内容用户根本不知道它
+# 曾经存在过，而多余的标点他一眼就能看见并改掉。
+
+# 这些词后面接着说的多半还是同一段话。就算原本真是新句子，
+# 换成逗号也只是行文风格的差别，读起来不会错。
+_CONTINUATIONS = (
+    "然后", "但是", "不过", "可是", "而且", "并且", "所以", "因为", "由于",
+    "就是", "还有", "另外", "以及", "或者", "至于", "于是", "接着", "后来",
+    "然而", "反正", "其实", "比如", "例如", "要不", "不然", "否则", "而是",
+)
+
+# 这几个字根本不能起头，跟在句号后面一定是断错了。
+# 只放绝对安全的语气词 —— 「的」「了」「过」看着也像，但「的确」
+# 「了不起」「过去」都能正常开句，宁可漏掉也不误伤。
+_CANNOT_START = "吗呢吧嘛们儿"
+
+# 半角句点要防着小数点（"3.14"），全角句号不用 —— "3.14。然后" 里那个
+# 句号该降级，前面是数字纯属巧合。所以两个分支的守卫不一样。
+_PAUSE_PERIOD_RE = re.compile(
+    r"(。|(?<!\d)\.)(\s*)(" + "|".join(_CONTINUATIONS) + r"|[" + _CANNOT_START + r"])"
+)
+
+
+def merge_pause_sentences(text: str) -> str:
+    """把思考停顿处误加的句号降级成逗号。判据是句号后面那个词。"""
+
+    def replace(match: re.Match) -> str:
+        period, gap, following = match.groups()
+        # 全角逗号后面不留空格；半角的把原来的空格照原样还回去
+        if period == "。":
+            return "，" + following
+        return "," + gap + following
+
+    return _PAUSE_PERIOD_RE.sub(replace, text)
+
+
 # ---------------------------------------------------------------- 组装
 
 def postprocess(
@@ -207,6 +254,7 @@ def postprocess(
     fullwidth_punctuation: bool = True,
     spoken_numbers: bool = True,
     spoken_symbols: bool = True,
+    merge_pause_periods: bool = True,
 ) -> str:
     """完整后处理链。热词纠正在 hotwords.py 里，由调用方插在中间。
 
@@ -231,4 +279,8 @@ def postprocess(
     text = fix_spacing(text)
     if fullwidth_punctuation:
         text = to_fullwidth_punct(text)
+    # 放在最后：前面几步可能改动标点形态（半角转全角），
+    # 这里要看的正是最终那个字符
+    if merge_pause_periods:
+        text = merge_pause_sentences(text)
     return text.strip()

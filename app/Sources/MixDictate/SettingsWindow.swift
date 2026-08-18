@@ -208,6 +208,7 @@ struct SettingsView: View {
                     Toggle("中文标点转全角（，。？！）", isOn: $model.config.fullwidthPunctuation)
                     Toggle("口语数字转阿拉伯数字（三点一四 → 3.14）", isOn: $model.config.spokenNumbers)
                     Toggle("口语符号转符号（艾特 gmail 点 com → @gmail.com）", isOn: $model.config.spokenSymbols)
+                    Toggle("停顿处误加的句号降级成逗号", isOn: $model.config.mergePausePeriods)
                     Text("关掉全角后标点保持半角，写代码时更顺手。")
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -53,6 +53,16 @@ struct Config {
     /// 不是卡壳，而删错的代价比留着重复大得多。
     var collapseRepeats: Bool = false
 
+    /// 把思考停顿处误加的句号降级成逗号。
+    ///
+    /// 压短停顿是从**声音**那一侧削掉线索，这个是从**文字**那一侧补救 ——
+    /// 模型在停顿处断了句，但后面跟着「然后」「但是」「所以」，说明这句
+    /// 根本没说完。声音里分不开的东西，文字里常常分得开。
+    ///
+    /// 只降级标点，绝不删字：删掉的内容你根本不知道它曾经存在过，
+    /// 多余的标点你一眼就能看见并改掉。
+    var mergePausePeriods: Bool = true
+
     /// 口语数字还原成阿拉伯数字：「三点一四」→「3.14」
     var spokenNumbers: Bool = true
 
@@ -159,6 +169,8 @@ extension Config: Codable {
             ?? fallback.spokenNumbers
         spokenSymbols = try c.decodeIfPresent(Bool.self, forKey: .spokenSymbols)
             ?? fallback.spokenSymbols
+        mergePausePeriods = try c.decodeIfPresent(Bool.self, forKey: .mergePausePeriods)
+            ?? fallback.mergePausePeriods
         minimumDurationSeconds = try c.decodeIfPresent(Double.self, forKey: .minimumDurationSeconds)
             ?? fallback.minimumDurationSeconds
         showLiveOverlay = try c.decodeIfPresent(Bool.self, forKey: .showLiveOverlay)

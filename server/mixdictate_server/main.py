@@ -131,6 +131,7 @@ async def transcribe(
     fullwidth_punct: bool = Form(True),
     spoken_numbers: bool = Form(True),
     spoken_symbols: bool = Form(True),
+    merge_pause_periods: bool = Form(True),
     partial: bool = Form(False),
 ) -> JSONResponse:
     started = time.monotonic()
@@ -195,6 +196,7 @@ async def transcribe(
         fullwidth_punctuation=fullwidth_punct,
         spoken_numbers=spoken_numbers,
         spoken_symbols=spoken_symbols,
+        merge_pause_periods=merge_pause_periods,
     )
 
     elapsed = time.monotonic() - started

@@ -7,6 +7,7 @@ from mixdictate_server.hotwords import HotwordTable
 from mixdictate_server.postprocess import (
     collapse_repeats,
     fix_spacing,
+    merge_pause_sentences,
     postprocess,
     strip_fillers,
     to_fullwidth_punct,
@@ -212,3 +213,66 @@ def test_repeated_reduplication_collapses_to_the_word():
     # 「谢谢谢谢」以单字重复四次的形式匹配，压成「谢」就错了
     assert collapse_repeats("谢谢谢谢") == "谢谢"
     assert collapse_repeats("看看看看") == "看看"
+
+
+# ---------------------------------------------------------------- 停顿句号
+
+def test_period_before_a_continuation_word_becomes_a_comma():
+    # 「说完了」和「在想下一句」在音频里都是一段安静，模型分不开。
+    # 但后面跟着「然后」，说明这句还没说完。
+    assert (
+        merge_pause_sentences("我觉得这个方案。然后我们再看别的")
+        == "我觉得这个方案，然后我们再看别的"
+    )
+
+
+def test_all_continuation_words_are_handled():
+    for word in ("但是", "而且", "所以", "因为", "就是", "还有", "其实"):
+        assert merge_pause_sentences(f"前面一句。{word}后面") == f"前面一句，{word}后面"
+
+
+def test_sentence_final_particle_after_a_period_is_a_break_error():
+    assert merge_pause_sentences("你说的对。吗") == "你说的对，吗"
+
+
+def test_a_real_sentence_boundary_is_left_alone():
+    # 后面不是接续词，就没有理由怀疑这个句号
+    text = "我先去吃饭。我们晚点再说。"
+    assert merge_pause_sentences(text) == text
+
+
+def test_decimal_points_are_never_touched():
+    assert merge_pause_sentences("版本是 1.然后") == "版本是 1.然后"
+    assert merge_pause_sentences("3.14 就是圆周率") == "3.14 就是圆周率"
+
+
+def test_fullwidth_period_after_a_digit_still_merges():
+    # 半角句点前面是数字要防着小数点，全角句号不用 —— 那个数字是巧合
+    assert merge_pause_sentences("圆周率是3.14。然后呢") == "圆周率是3.14，然后呢"
+
+
+def test_halfwidth_period_keeps_its_spacing():
+    assert merge_pause_sentences("换个 schema. 然后重启") == "换个 schema, 然后重启"
+
+
+def test_the_final_period_survives():
+    assert merge_pause_sentences("就这样。").endswith("。")
+
+
+def test_it_never_deletes_characters():
+    # 这一步只降级标点。删掉的内容用户根本不知道曾经存在过，
+    # 多余的标点他一眼就能看见并改掉 —— 两种错误的代价完全不对等。
+    for text in (
+        "我觉得这个方案。然后我们再看别的",
+        "前面。但是后面",
+        "你说的对。吗",
+    ):
+        before = [c for c in text if c not in "。，.,"]
+        after = [c for c in merge_pause_sentences(text) if c not in "。，.,"]
+        assert before == after
+
+
+def test_merging_can_be_turned_off():
+    text = "我觉得这个方案。然后我们再看别的"
+    assert "。" in postprocess(text, merge_pause_periods=False)
+    assert "。" not in postprocess(text, merge_pause_periods=True)
