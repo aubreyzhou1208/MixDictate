@@ -18,10 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionTimer: Timer?
     private var configTimer: Timer?
     private var configStamp: Date?
-    /// 上一次中间结果对应的音频大小和文字。松手时如果音频几乎没再增长，
-    /// 就直接用它当最终结果，省掉一整次推理。
-    private var lastPartialBytes = 0
-    private var lastPartialText = ""
+    /// 已定稿段落拼起来的文字。这部分不会再被重新转写。
+    private var committedText = ""
+    /// 未定稿那一段的最新转写，以及它对应的音频结束位置
+    private var pendingText = ""
+    private var pendingEnd = 0
     /// 连续多少次检测到静音。第一次检测时用户往往还没开口，
     /// 立刻报「没有听到声音」是误报。
     private var silentTicks = 0
@@ -297,8 +298,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             silentTicks = 0
-            lastPartialBytes = 0
-            lastPartialText = ""
+            committedText = ""
+            pendingText = ""
+            pendingEnd = 0
             liveInserter.reset()
             state = .recording
             if config.showLiveOverlay {
@@ -372,9 +374,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        guard !partialInFlight, let wav = recorder.snapshotWAV() else { return }
+        guard !partialInFlight, let snapshot = recorder.pendingSnapshot() else { return }
 
-        let snapshotBytes = wav.count
         partialInFlight = true
         let client = TranscriptionClient(config: config)
 
@@ -383,7 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let text: String
             do {
-                text = try await client.transcribe(wav: wav, partial: true)
+                text = try await client.transcribe(wav: snapshot.wav, partial: true)
             } catch {
                 // 中间请求失败不打断录音，但要留下痕迹 —— 松手后的最终请求
                 // 多半会因为同样的原因失败，到时候浮层会把它显示出来
@@ -395,14 +396,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 空结果别覆盖掉「没有听到声音」那条提示
             guard !text.isEmpty else { return }
 
-            lastPartialBytes = snapshotBytes
-            lastPartialText = text
+            pendingText = text
+            pendingEnd = snapshot.endOffset
 
-            if config.liveInsertion {
-                liveInserter.update(to: text)
-            } else {
-                overlay.update(text, isFinal: false)
+            if snapshot.atPause {
+                // 说话人在这里停顿了，这一段就此定稿 —— 之后不会再转写它。
+                // 这是长录音不再越来越慢的关键：开销只跟"最后一段"有关，
+                // 跟总时长无关。
+                committedText += text
+                pendingText = ""
+                recorder.commit(upTo: snapshot.endOffset)
             }
+
+            show(committedText + pendingText, isFinal: false)
+        }
+    }
+
+    /// 把当前进展显示出来：写输入框还是写浮层
+    private func show(_ text: String, isFinal: Bool) {
+        if config.liveInsertion {
+            liveInserter.update(to: text)
+        } else {
+            overlay.update(text, isFinal: isFinal)
         }
     }
 
@@ -410,7 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         stopPartialUpdates()
 
-        guard let wav = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
+        guard let tailWav = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
             // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从
             // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
             overlay.update(
@@ -422,13 +437,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // 松手时音频若比最后一次中间结果几乎没长（0.4 秒以内），那次的文字
-        // 就已经是最终结果了。再跑一次推理纯属重复劳动，而松手之后的等待
-        // 恰恰是整个流程里最难受的一段。
-        let grownBytes = wav.count - lastPartialBytes
-        if !lastPartialText.isEmpty, grownBytes < Self.reusePartialThresholdBytes {
-            NSLog("MixDictate: 音频未再增长，直接用最后一次中间结果")
-            deliver(lastPartialText)
+        // 尾巴是空的：说话正好停在段落边界上，全部内容都已经定稿
+        if tailWav.isEmpty {
+            deliver(committedText)
+            return
+        }
+
+        // 尾巴比最后一次中间结果几乎没长（0.4 秒以内），那次的文字就是
+        // 最终结果。再跑一次推理纯属重复劳动，而松手之后的等待恰恰是
+        // 整个流程里最难受的一段。
+        if !pendingText.isEmpty,
+           recorder.capturedBytes - pendingEnd < Self.reusePartialThresholdBytes {
+            NSLog("MixDictate: 尾部音频未再增长，直接用最后一次中间结果")
+            deliver(committedText + pendingText)
             return
         }
 
@@ -438,7 +459,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task { @MainActor in
             do {
-                let text = try await client.transcribe(wav: wav)
+                // 只转最后这一段。前面的段落早就转过并定稿了 ——
+                // 这就是长录音松手后不再等很久的原因。
+                let tail = try await client.transcribe(wav: tailWav)
+                let text = committedText + tail
+
                 guard !text.isEmpty else {
                     overlay.update(
                         recorder.heardSound ? "没识别出内容" : "没有听到声音，检查一下麦克风权限",

@@ -28,6 +28,16 @@ final class AudioRecorder {
     /// 一旦用户关掉浮层，这个标志永远是 false，会误报「没有听到声音」。
     private var sawSound = false
 
+    /// 已定稿音频的结束位置。这之前的部分转写过一次就不再碰。
+    ///
+    /// 没有它的话，每次刷新都要重转"从开头到现在"的整段 —— 说 30 秒时
+    /// 每次刷新转 30 秒，松手后再转一遍 30 秒，开销随时长平方级恶化。
+    private var committedOffset = 0
+
+    /// 最后一次检测到人声的位置。用来找停顿：这个位置到缓冲区末尾的距离
+    /// 就是当前的静音时长，够长就说明可以在这里切一刀。
+    private var lastLoudByte = 0
+
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
@@ -44,6 +54,8 @@ final class AudioRecorder {
         pcm.removeAll(keepingCapacity: true)
         peak = 0
         sawSound = false
+        committedOffset = 0
+        lastLoudByte = 0
         pcmLock.unlock()
 
         let input = engine.inputNode
@@ -79,7 +91,22 @@ final class AudioRecorder {
         pcmLock.unlock()
 
         guard duration >= minimumDuration, !captured.isEmpty else { return nil }
-        return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
+
+        // 只返回还没定稿的尾巴。前面的段落早就转过了，再转一遍纯属浪费 ——
+        // "松手之后要等很久"正是这么来的。
+        let tail = captured.subdata(in: min(committedOffset, captured.count)..<captured.count)
+
+        // 空 Data 和 nil 是两回事：nil = 录音太短没内容，
+        // 空 Data = 录到了但全部已经定稿，尾巴没东西要转。
+        guard !tail.isEmpty else { return Data() }
+        return Self.makeWAV(pcm: tail, sampleRate: 16_000, channels: 1)
+    }
+
+    /// 目前已录到的字节数。用来判断转写完成后音频有没有继续增长。
+    var capturedBytes: Int {
+        pcmLock.lock()
+        defer { pcmLock.unlock() }
+        return pcm.count
     }
 
     /// 目前已录到的时长（秒）。
@@ -105,17 +132,43 @@ final class AudioRecorder {
         return value
     }
 
-    /// 录音进行中取一份当前音频的快照，用来做实时转写。
-    /// 不停止录音、不清空缓冲 —— 每次快照都是"从开始到现在"的完整音频。
-    func snapshotWAV() -> Data? {
+    /// 未定稿那一段的快照：只包含上次定稿之后录到的音频。
+    ///
+    /// 返回的 endOffset 要原样传回 commit(upTo:)。不能事后用"当前长度"
+    /// 代替 —— 转写要花时间，那期间用户还在说，长度早变了，
+    /// 用新长度定稿会把没转过的音频一起标记成已完成，直接丢字。
+    func pendingSnapshot() -> (wav: Data, endOffset: Int, atPause: Bool)? {
         pcmLock.lock()
-        let captured = pcm
+        let pending = pcm.subdata(in: committedOffset..<pcm.count)
+        let endOffset = pcm.count
+        let silenceBytes = pcm.count - lastLoudByte
         pcmLock.unlock()
 
         // 太短的片段模型只会输出噪音，不如不发
-        guard captured.count >= 16_000 else { return nil }  // 约 0.5 秒
-        return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
+        guard pending.count >= 16_000 else { return nil }  // 约 0.5 秒
+
+        // 末尾静音够长 = 说话人停顿了，可以在这里切一刀。
+        // 切在停顿处而不是随便切，是为了不把一个词劈成两半。
+        let atPause = silenceBytes >= Self.pauseBytes && pending.count >= Self.minSegmentBytes
+
+        return (
+            Self.makeWAV(pcm: pending, sampleRate: 16_000, channels: 1),
+            endOffset,
+            atPause
+        )
     }
+
+    /// 把 endOffset 之前的音频标记为已定稿，以后不再转写。
+    func commit(upTo endOffset: Int) {
+        pcmLock.lock()
+        committedOffset = max(committedOffset, min(endOffset, pcm.count))
+        pcmLock.unlock()
+    }
+
+    /// 0.6 秒静音算一次停顿
+    private static let pauseBytes = Int(0.6 * 16_000) * 2
+    /// 段落至少要有 1.5 秒，否则切得太碎反而拖慢
+    private static let minSegmentBytes = Int(1.5 * 16_000) * 2
 
     // MARK: - 重采样
 
@@ -160,7 +213,10 @@ final class AudioRecorder {
         }
         let level = Float(framePeak) / Float(Int16.max)
         peak = max(peak, level)
-        if level > 0.01 { sawSound = true }
+        if level > 0.01 {
+            sawSound = true
+            lastLoudByte = pcm.count
+        }
         pcmLock.unlock()
     }
 

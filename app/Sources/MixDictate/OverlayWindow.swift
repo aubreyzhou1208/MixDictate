@@ -32,9 +32,19 @@ final class OverlayWindow {
 
     func update(_ text: String, isFinal: Bool) {
         guard panel != nil else { return }
-        label?.stringValue = text.isEmpty ? "…" : text
+        label?.stringValue = text.isEmpty ? "…" : Self.trimmedForDisplay(text)
         label?.textColor = isFinal ? .labelColor : .secondaryLabelColor
         layout()
+    }
+
+    /// 只显示末尾一段。
+    ///
+    /// 之前是原样显示：说得越久面板越高，最后高过屏幕，看起来就像
+    /// "超过一定字数就不更新了"。浮层的用途是看最新进展，不是回读全文。
+    private static func trimmedForDisplay(_ text: String) -> String {
+        let limit = 140
+        guard text.count > limit else { return text }
+        return "…" + String(text.suffix(limit))
     }
 
     func hide(after delay: TimeInterval = 0) {
@@ -120,10 +130,11 @@ final class OverlayWindow {
         guard let panel, let label, let screen = NSScreen.main else { return }
 
         let textWidth = width - horizontalPadding * 2
-        let textHeight = max(
-            22,
-            label.sizeThatFits(NSSize(width: textWidth, height: .greatestFiniteMagnitude)).height
-        )
+        // 上限保证面板不会长到顶出屏幕
+        let measured = label.sizeThatFits(
+            NSSize(width: textWidth, height: .greatestFiniteMagnitude)
+        ).height
+        let textHeight = min(max(22, measured), 120)
         let panelHeight = textHeight + verticalPadding * 2
 
         let visible = screen.visibleFrame
