@@ -81,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "hotkeyKeyCode": Int(config.pushToTalkKeyCode),
             "hotkeyName": HotKeyMonitor.displayName(for: config.pushToTalkKeyCode),
             "hotkeyMonitorInstalled": monitor != nil,
+            "echoCancellation": recorder.echoCancellationActive,
+            "inputFormat": recorder.inputFormatDescription,
             "state": String(describing: state),
             "lastError": lastError ?? "",
             "appPath": Bundle.main.bundleURL.path,
@@ -606,7 +608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
             let reason = recorder.heardSound
                 ? "太短了，没录到内容"
-                : microphoneHint
+                : silentCaptureMessage()
             overlay.setStatus(reason)
             overlay.update(reason, isFinal: true)
             overlay.hide(after: 1.6)
@@ -674,7 +676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reportEmptyResult() {
         let reason: String
         if !recorder.heardSound {
-            reason = microphoneHint
+            reason = silentCaptureMessage()
         } else if config.voiceThreshold > 0,
                   Double(recorder.loudestLevel) < config.voiceThreshold {
             // 麦克风有信号，但全程没越过人声门限，整段都被当成环境音挡掉了。
@@ -811,6 +813,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             reportMicrophoneDenied()
         }
+    }
+
+    /// 录到全静音时的处理：**先自愈，再报告。**
+    ///
+    /// 最常见的原因不是权限，是回声消除。macOS 的语音处理单元会把输入
+    /// 换成多声道格式，转换那一步一旦对不上就安静地输出全零 —— 权限、
+    /// 引擎、tap 回调全都"正常"，只是每个采样都是 0。
+    ///
+    /// 所以先把回声消除摘掉再试。它是锦上添花，能听见才是底线。
+    private func silentCaptureMessage() -> String {
+        if recorder.echoCancellationActive {
+            recorder.disableEchoCancellation()
+            NSLog("MixDictate: 全静音且回声消除开着 —— 已自动关掉回声消除")
+            return "回声消除把麦克风变哑了，已自动关掉，再说一次"
+        }
+        return microphoneHint
     }
 
     /// 麦克风一片死寂时该说什么。**「检查一下麦克风权限」是不够的** ——

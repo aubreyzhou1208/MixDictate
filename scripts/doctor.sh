@@ -70,6 +70,14 @@ if [ -f "$STATUS" ]; then
         echo "App 在运行（状态 ${age} 秒前刷新）"
     fi
     cat "$STATUS"
+    # 输入格式的声道数是关键：语音处理单元会把它变成多声道，
+    # 而声道数不匹配的转换会安静地输出全零
+    if grep -q '"inputFormat" : "[0-9]*Hz [2-9]' "$STATUS" 2>/dev/null \
+        && grep -q '"echoCancellation" : true' "$STATUS" 2>/dev/null; then
+        echo
+        echo "⚠️  回声消除开着，且输入是多声道 —— 这个组合会让采集变成全零"
+        echo "   ./scripts/config.sh set echoCancellation false"
+    fi
     if grep -q '"accessibility" : false' "$STATUS" 2>/dev/null; then
         echo
         echo "⚠️  没有辅助功能权限 —— 按键事件根本到不了 App，快捷键必然毫无反应"

@@ -87,6 +87,32 @@ final class AudioRecorder {
     /// 语音处理单元只需要开一次。反复切换要重建音频图，没必要。
     private var voiceProcessingEnabled = false
 
+    /// 这次会话里不再打开回声消除。见 disableEchoCancellation()。
+    private var voiceProcessingBlocked = false
+
+    /// 回声消除当前是否真的开着
+    var echoCancellationActive: Bool { voiceProcessingEnabled }
+
+    /// 最近一次采集的输入格式。排错时这是关键的一行 ——
+    /// 声道数是几，直接决定了转换会不会静默地吐出全零。
+    private(set) var inputFormatDescription = ""
+
+    /// 关掉回声消除，并且这次会话里不再打开。
+    ///
+    /// macOS 的语音处理单元会把输入格式从单声道换成多声道（常见是 5 声道），
+    /// 而 AVAudioConverter 在声道数不匹配又没有声道映射时**不会报错，
+    /// 它会安静地输出全零** —— 麦克风"一切正常"却一个字都收不到。
+    ///
+    /// 下面已经显式设了声道映射，但不同机型和系统版本的表现不一样，
+    /// 所以还要留一条自愈的路：真的录到全静音时，宁可不要回声消除，
+    /// 也不能让听写整个哑掉。回声消除是锦上添花，能听见才是底线。
+    func disableEchoCancellation() {
+        guard !isRecording else { return }
+        try? engine.inputNode.setVoiceProcessingEnabled(false)
+        voiceProcessingEnabled = false
+        voiceProcessingBlocked = true
+    }
+
     /// - Parameter cancelEcho: 打开系统的语音处理单元做回声消除。
     ///   它知道系统正在往扬声器送什么，就从麦克风信号里把那部分减掉 ——
     ///   否则你在放视频时听写，视频里的人声会被一起录进去当成你说的话。
@@ -95,7 +121,7 @@ final class AudioRecorder {
         guard !isRecording else { return }
 
         // 必须在引擎启动前设置，而且只需要设一次
-        if cancelEcho, !voiceProcessingEnabled {
+        if cancelEcho, !voiceProcessingEnabled, !voiceProcessingBlocked {
             do {
                 try engine.inputNode.setVoiceProcessingEnabled(true)
                 voiceProcessingEnabled = true
@@ -125,6 +151,19 @@ final class AudioRecorder {
         guard inputFormat.sampleRate > 0 else { throw RecorderError.noInputDevice }
 
         converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+
+        // 声道数不匹配时必须显式给映射，否则 AVAudioConverter 会安静地
+        // 输出全零。语音处理单元开着的时候输入常常是 5 声道，正好踩中。
+        // 取前几路 —— 第 0 路就是处理过的人声。
+        if inputFormat.channelCount > targetFormat.channelCount {
+            converter?.channelMap = (0..<Int(targetFormat.channelCount))
+                .map { NSNumber(value: $0) }
+        }
+
+        inputFormatDescription =
+            "\(Int(inputFormat.sampleRate))Hz \(inputFormat.channelCount)ch"
+        NSLog("MixDictate: 输入格式 %@，回声消除 %@",
+              inputFormatDescription, voiceProcessingEnabled ? "开" : "关")
 
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.append(buffer)
