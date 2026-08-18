@@ -40,6 +40,7 @@ enum InjectionResult {
 ///      少数拦截粘贴的 App 只认这个。
 enum TextInjector {
     private static let vKeyCode: CGKeyCode = 9
+    private static let deleteKeyCode: CGKeyCode = 51
 
     @discardableResult
     static func insert(_ text: String, method: InsertionMethod = .paste) -> InjectionResult {
@@ -130,6 +131,30 @@ enum TextInjector {
 
             down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
             up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// 直接敲字，不碰剪贴板。实时写入用这个 —— 剪贴板方案没法做增量修改。
+    static func typeText(_ text: String) {
+        typeUnicode(text)
+    }
+
+    /// 连发退格。实时写入时用来抹掉被模型改写掉的那一段。
+    static func sendBackspaces(_ count: Int) {
+        guard count > 0 else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+
+        for _ in 0..<count {
+            guard
+                let down = CGEvent(
+                    keyboardEventSource: source, virtualKey: deleteKeyCode, keyDown: true
+                ),
+                let up = CGEvent(
+                    keyboardEventSource: source, virtualKey: deleteKeyCode, keyDown: false
+                )
+            else { return }
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
         }

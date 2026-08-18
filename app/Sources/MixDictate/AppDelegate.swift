@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: ServerProcess!
     private let settingsWindow = SettingsWindowController()
     private let overlay = OverlayWindow()
+    private let liveInserter = LiveInserter()
     private var partialTimer: Timer?
     /// 同一时刻只允许一个中间请求在飞。模型是串行的，堆积请求
     /// 只会让松手后的最终结果排在后面等更久。
@@ -252,9 +253,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             silentTicks = 0
+            liveInserter.reset()
             state = .recording
             if config.showLiveOverlay {
                 overlay.show(placeholder: "听着呢…")
+            }
+            // 实时写入也要靠中间结果，即使浮层关着
+            if config.showLiveOverlay || config.liveInsertion {
                 startPartialUpdates()
             }
         } catch {
@@ -268,16 +273,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 每次都从头转整段而不是增量拼接 —— 模型是整段推理的，
     /// 分段拼接会在切口处丢字，中英混说时尤其明显。
     private func startPartialUpdates() {
+        scheduleNextPartial()
+    }
+
+    /// 用一次性定时器不断重排，而不是固定周期重复 —— 因为间隔是变的。
+    private func scheduleNextPartial() {
+        guard state == .recording else { return }
+
         partialTimer?.invalidate()
         partialTimer = Timer.scheduledTimer(
-            withTimeInterval: config.partialIntervalSeconds,
-            repeats: true
+            withTimeInterval: nextPartialDelay(),
+            repeats: false
         ) { [weak self] _ in
             // 先解包成不可变的 self 再进 Task —— [weak self] 捕获出来的是
             // 可变的可选变量，Swift 不允许在并发上下文里直接引用它
             guard let self else { return }
-            Task { @MainActor in self.requestPartial() }
+            Task { @MainActor in
+                self.requestPartial()
+                self.scheduleNextPartial()
+            }
         }
+    }
+
+    /// 每次中间结果都要重转**整段**音频，所以录得越久单次开销越大。
+    /// 固定 1.2 秒的话，说 10 秒累计要转掉约 45 秒的音频 —— 是最终那次
+    /// 的 4.5 倍，GPU 全被中间请求占着，松手后的结果反而要排队。
+    /// 让间隔跟着已录时长增长，把额外开销压在可控范围内。
+    private func nextPartialDelay() -> TimeInterval {
+        max(config.partialIntervalSeconds, recorder.capturedSeconds * 0.5)
     }
 
     private func stopPartialUpdates() {
@@ -320,7 +343,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard state == .recording else { return }
             // 空结果别覆盖掉「没有听到声音」那条提示
             guard !text.isEmpty else { return }
-            overlay.update(text, isFinal: false)
+
+            if config.liveInsertion {
+                liveInserter.update(to: text)
+            } else {
+                overlay.update(text, isFinal: false)
+            }
         }
     }
 
@@ -353,6 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         isFinal: true
                     )
                     overlay.hide(after: 1.6)
+                    state = .idle
+                    return
+                }
+
+                // 实时写入模式：文字早就在输入框里了，这里只要把它改成
+                // 最终版本 —— 不用再粘贴一次，那正是"还要再复制一遍"的慢感来源
+                if config.liveInsertion {
+                    liveInserter.update(to: text)
+                    overlay.hide()
                     state = .idle
                     return
                 }

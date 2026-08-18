@@ -76,9 +76,10 @@ final class OverlayWindow {
         effect.material = .hudWindow
         effect.blendingMode = .behindWindow
         effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
-        effect.layer?.masksToBounds = true
+        // 圆角必须用 maskImage 而不是 layer.cornerRadius。
+        // NSVisualEffectView 的材质是系统在图层之外合成的，cornerRadius +
+        // masksToBounds 裁不干净，四角会露出一圈没被裁掉的白边。
+        effect.maskImage = Self.roundedMask(radius: 14)
 
         let label = NSTextField(wrappingLabelWithString: "")
         label.font = .systemFont(ofSize: 17)
@@ -94,6 +95,25 @@ final class OverlayWindow {
         self.panel = panel
         self.label = label
         return panel
+    }
+
+    /// 可拉伸的圆角遮罩。capInsets 让四角保持原样、只拉伸中间，
+    /// 这样同一张图能适配任意尺寸的浮层。
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        let diameter = radius * 2 + 1
+        let image = NSImage(
+            size: NSSize(width: diameter, height: diameter),
+            flipped: false
+        ) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(
+            top: radius, left: radius, bottom: radius, right: radius
+        )
+        image.resizingMode = .stretch
+        return image
     }
 
     private func layout() {

@@ -23,6 +23,10 @@ struct Config {
     /// 反而拖慢松手后的最终结果。
     var partialIntervalSeconds: Double = 1.2
 
+    /// 边说边把文字直接写进输入框，不用浮层也不用等松手。
+    /// 代价见设置界面里的说明 —— 默认关闭。
+    var liveInsertion: Bool = false
+
     /// 文字送进输入框的方式。粘贴最快，逐字输入兼容性更好。
     /// 安全输入模式下两者都会被系统拦截，那时会自动改走辅助功能接口。
     var insertionMethod: String = InsertionMethod.paste.rawValue
@@ -85,6 +89,8 @@ extension Config: Codable {
             ?? fallback.showLiveOverlay
         partialIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .partialIntervalSeconds)
             ?? fallback.partialIntervalSeconds
+        liveInsertion = try c.decodeIfPresent(Bool.self, forKey: .liveInsertion)
+            ?? fallback.liveInsertion
         insertionMethod = try c.decodeIfPresent(String.self, forKey: .insertionMethod)
             ?? fallback.insertionMethod
         model = try c.decodeIfPresent(String.self, forKey: .model)

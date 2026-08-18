@@ -82,6 +82,13 @@ final class AudioRecorder {
         return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
     }
 
+    /// 目前已录到的时长（秒）。
+    var capturedSeconds: Double {
+        pcmLock.lock()
+        defer { pcmLock.unlock() }
+        return Double(pcm.count) / 2.0 / 16_000.0
+    }
+
     /// 本次录音是否听到过真实声音。全程为 false 基本就是麦克风没工作。
     var heardSound: Bool {
         pcmLock.lock()

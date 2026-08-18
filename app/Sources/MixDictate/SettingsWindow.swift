@@ -163,6 +163,15 @@ struct SettingsView: View {
 
             GroupBox("输入方式") {
                 VStack(alignment: .leading, spacing: 8) {
+                    Toggle("边说边写进输入框", isOn: $model.config.liveInsertion)
+                    Text("开启后文字直接出现在光标处，不用等松手，也不再多一次粘贴。\n"
+                         + "代价：模型会边说边修正前面的词，所以你会看到文字被退删重写；\n"
+                         + "而且听写过程中别自己动光标或改字，否则退删会误伤你的内容。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
                     Picker("输入方式", selection: $model.config.insertionMethod) {
                         ForEach(InsertionMethod.allCases, id: \.rawValue) { option in
                             Text(option.label).tag(option.rawValue)
