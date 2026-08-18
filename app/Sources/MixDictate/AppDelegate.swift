@@ -91,6 +91,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    /// 重新触发系统的授权对话框。
+    ///
+    /// 需要这个入口是因为：权限按代码签名记录，而每次重新构建都是 ad-hoc
+    /// 签名，重装几次之后 TCC 里的旧记录会跟新签名对不上 —— 列表里看不到
+    /// 这个 App，或者看到了勾上也不生效。这时候只能清空 TCC 记录重来。
+    @objc private func requestAccessibilityAgain() {
+        if TextInjector.hasAccessibilityPermission {
+            let ok = NSAlert()
+            ok.messageText = "辅助功能权限已经有了"
+            ok.informativeText = "如果按住说话键仍然没反应，请把菜单里「查看服务日志…」的内容发出来。"
+            NSApp.activate(ignoringOtherApps: true)
+            ok.runModal()
+            return
+        }
+
+        TextInjector.ensureAccessibilityPermission(prompt: true)
+        startPermissionWatch()
+
+        let alert = NSAlert()
+        alert.messageText = "请在系统设置里打开 MixDictate"
+        alert.informativeText = """
+            系统设置 › 隐私与安全性 › 辅助功能
+
+            列表里找不到它，或者打开了也不管用？
+            在「终端」里运行下面三行，然后重新授权：
+
+              tccutil reset Accessibility dev.mixdictate.app
+              pkill -x MixDictate
+              open -a MixDictate
+            """
+        alert.addButton(withTitle: "打开设置")
+        alert.addButton(withTitle: "复制上面的命令")
+        alert.addButton(withTitle: "关闭")
+
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            TextInjector.openAccessibilitySettings()
+        case .alertSecondButtonReturn:
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(
+                "tccutil reset Accessibility dev.mixdictate.app\n"
+                    + "pkill -x MixDictate\n"
+                    + "open -a MixDictate\n",
+                forType: .string
+            )
+        default:
+            break
+        }
+    }
+
     private func installHotKeyMonitor() {
         monitor?.stop()
         monitor = HotKeyMonitor(
@@ -411,6 +463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "重启转写服务", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看服务日志…", action: #selector(openServerLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看转写记录…", action: #selector(openTranscriptLog), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "重新申请辅助功能权限…", action: #selector(requestAccessibilityAgain), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MixDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 

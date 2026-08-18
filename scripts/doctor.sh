@@ -96,6 +96,16 @@ section "辅助功能权限"
 echo "命令行读不到这个状态（系统限制）。"
 echo "自己确认：菜单栏图标 → 设置… → 顶部「权限」那一栏。"
 echo "或者：系统设置 › 隐私与安全性 › 辅助功能，看 MixDictate 的开关是不是开的。"
+echo
+echo "如果列表里找不到 MixDictate，或者开关打开了也没用："
+echo "  权限是按代码签名记的，而每次 ./install.sh 都会重新 ad-hoc 签名，"
+echo "  旧记录会跟新签名对不上。清空重来："
+echo
+echo "    tccutil reset Accessibility dev.mixdictate.app"
+echo "    pkill -x MixDictate"
+echo "    open -a MixDictate"
+echo
+echo "  重启后系统会重新弹授权对话框。"
 
 echo
 echo "----- 报告结束 -----"
