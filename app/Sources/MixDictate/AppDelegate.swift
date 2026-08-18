@@ -146,7 +146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTimeInterval: config.partialIntervalSeconds,
             repeats: true
         ) { [weak self] _ in
-            Task { @MainActor in self?.requestPartial() }
+            // 先解包成不可变的 self 再进 Task —— [weak self] 捕获出来的是
+            // 可变的可选变量，Swift 不允许在并发上下文里直接引用它
+            guard let self else { return }
+            Task { @MainActor in self.requestPartial() }
         }
     }
 
