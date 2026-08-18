@@ -151,8 +151,12 @@ struct SettingsView: View {
 
             GroupBox("录音") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("回声消除（不录进电脑自己放的声音）", isOn: $model.config.echoCancellation)
-                    Text("边放视频边听写时必开，否则视频里的人声会被当成你说的话。")
+                    Toggle("回声消除（默认关，代价见下）", isOn: $model.config.echoCancellation)
+                    Text("打开后电脑自己放的声音不会被录进去，但在 macOS 上有两个躲不开的代价：\n"
+                         + "① 整台电脑的音量会被压低 —— 语音处理单元是给通话用的，\n"
+                         + "   一开启系统就压低其他所有声音，这个行为 macOS 上关不掉。\n"
+                         + "② 它会把输入换成多声道，转换对不上时采集会整个变成静音。\n"
+                         + "挡外放用下面的人声门限就够了，代价小得多。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

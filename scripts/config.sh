@@ -19,7 +19,7 @@ usage() {
   ./scripts/config.sh set <字段> <值>          修改一项
 
 常用字段：
-  echoCancellation    true / false   回声消除，不录进电脑自己放的声音（边放视频边听写时必开）
+  echoCancellation    true / false   回声消除（默认关！打开会让整台电脑音量变小）
   voiceThreshold      0…1            人声门限，低于它的声音直接丢掉（默认 0.05，0=关）
                                      外放还是被转进来就调大，小声说话被吞掉就调小
                                      不用猜：菜单里有「校准人声门限…」会给建议值

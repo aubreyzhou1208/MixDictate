@@ -120,8 +120,9 @@ final class AudioRecorder {
     func start(cancelEcho: Bool) throws {
         guard !isRecording else { return }
 
-        // 必须在引擎启动前设置，而且只需要设一次
-        if cancelEcho, !voiceProcessingEnabled, !voiceProcessingBlocked {
+        // 必须在引擎启动前设置
+        let wantsEcho = cancelEcho && !voiceProcessingBlocked
+        if wantsEcho, !voiceProcessingEnabled {
             do {
                 try engine.inputNode.setVoiceProcessingEnabled(true)
                 voiceProcessingEnabled = true
@@ -130,6 +131,14 @@ final class AudioRecorder {
                 NSLog("MixDictate: 回声消除不可用，改用普通采集：%@",
                       error.localizedDescription)
             }
+        } else if !wantsEcho, voiceProcessingEnabled {
+            // 关掉必须是主动的，不能只是"下次不再打开"。
+            // 语音处理单元只要还活着，macOS 就一直把系统里其他声音压低
+            // （跟通话中一样）—— 用户会发现"整台电脑的音量都变小了"，
+            // 而且根本想不到是听写工具干的。
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+            voiceProcessingEnabled = false
+            NSLog("MixDictate: 已关闭回声消除，系统音量压低随之解除")
         }
 
         pcmLock.lock()
