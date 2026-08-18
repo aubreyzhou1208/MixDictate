@@ -282,6 +282,20 @@ App 会弹窗提示，并且**文字已经在剪贴板里，可以直接 Cmd+V**
 **说话没反应** —— 确认按的是右 Option 不是左 Option。改键见配置一节。
 如果听到"叮"一声，说明服务还没就绪。
 
+**菜单栏图标找不到** —— 图标是个**麦克风**符号，在右侧时钟那一排。
+按住 `Cmd` 拖动菜单栏图标可以重新排序，把它拖到时钟旁边就不容易被挤掉。
+
+不想折腾的话，菜单里的功能都有对应的命令：
+
+```bash
+open ~/Library/Application\ Support/MixDictate/logs/last_request.wav  # 听最近一次录音
+open ~/Library/Application\ Support/MixDictate/logs/transcripts.log   # 看转写记录
+open ~/Library/Application\ Support/MixDictate/logs/server.log        # 看服务日志
+open -e ~/Library/Application\ Support/MixDictate/hotwords.txt        # 改热词表
+```
+
+`./scripts/doctor.sh` 的结尾也会把这些命令打出来。
+
 **菜单栏里根本看不到图标** —— 刘海屏图标太多会被挤到刘海后面（退几个别的
 菜单栏 App 试试，或用 Bartender / Ice 管理）；也可能 App 压根没起来，
 在「应用程序」里双击看有没有报错。

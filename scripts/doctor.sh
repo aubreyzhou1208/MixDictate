@@ -126,5 +126,26 @@ echo "    open -a MixDictate"
 echo
 echo "  重启后系统会重新弹授权对话框。"
 
+section "常用命令（不用找菜单栏图标）"
+cat <<CMDS
+听最近一次录音：
+  open "$LOGS/last_request.wav"
+
+看转写记录（原始输出 vs 处理后）：
+  open "$LOGS/transcripts.log"
+
+看服务日志：
+  open "$LOGS/server.log"
+
+改热词表：
+  open -e "$SUPPORT/hotwords.txt"
+
+重启 App：
+  pkill -x MixDictate; open -a MixDictate
+
+菜单栏图标是个麦克风符号，在右侧时钟那一排。
+按住 Cmd 拖动可以重新排序 —— 拖到时钟旁边就不会被刘海挤掉了。
+CMDS
+
 echo
 echo "----- 报告结束 -----"
