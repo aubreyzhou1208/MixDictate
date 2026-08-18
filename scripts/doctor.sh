@@ -83,7 +83,9 @@ fi
 
 section "最近一次录音"
 if [ -f "$LOGS/last_request.wav" ]; then
-    echo "$(ls -lh "$LOGS/last_request.wav" | awk '{print $5}')  $LOGS/last_request.wav"
+    # 用 wc 而不是解析 ls 的输出：ls 的格式不保证，shellcheck 也会报 SC2012
+    bytes="$(wc -c < "$LOGS/last_request.wav" | tr -d ' ')"
+    echo "${bytes} 字节  $LOGS/last_request.wav"
     echo "用播放器打开听一下："
     echo "  open \"$LOGS/last_request.wav\""
     echo "能听清自己说话 → 录音链路没问题，问题在模型或热词"
