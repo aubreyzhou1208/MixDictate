@@ -50,6 +50,14 @@ _LEADING_FILLER_RE = re.compile(
 # 卡壳重复："就是就是" -> "就是"，"我我我" -> "我"
 _STUTTER_RE = re.compile(f"([{CJK}]{{1,2}}?)\\1{{1,}}")
 
+# 更长的自我重复："我觉得我觉得这个方案" -> "我觉得这个方案"。
+# 说话时想改口或者一时卡住，很容易把前半句重说一遍。
+# 从长到短匹配：先把长短语的重复消掉，避免长短语被拆成几个短重复分别处理。
+_PHRASE_REPEAT_RES = [
+    re.compile(f"([{CJK}]{{{n}}})\\1")
+    for n in range(6, 1, -1)
+]
+
 _STUTTER_WHITELIST = {
     # 这些叠词是正常中文，不能压缩
     "谢谢", "看看", "试试", "说说", "想想", "刚刚", "常常", "渐渐",
@@ -59,16 +67,41 @@ _STUTTER_WHITELIST = {
 }
 
 
+def collapse_phrase_repeats(text: str) -> str:
+    """消掉紧邻的短语重复。
+
+    口述时改口或卡壳会把前半句重说一遍："我觉得我觉得这个方案不错"。
+    只处理**紧邻**的完全重复，中间隔了字就不算 —— "这个方案好，这个方案
+    确实好"是正常表达，不该动。
+
+    白名单挡住正常的叠词，比如"谢谢""看看"。
+    """
+    for pattern in _PHRASE_REPEAT_RES:
+        text = pattern.sub(_dedupe_match, text)
+    return text
+
+
+def _dedupe_match(match: re.Match) -> str:
+    whole, unit = match.group(0), match.group(1)
+
+    if whole in _STUTTER_WHITELIST or unit in _STUTTER_WHITELIST:
+        return whole
+
+    # 「谢谢谢谢」会以单字「谢」重复四次的形式匹配到，压成「谢」就错了 ——
+    # 白名单里存的是「谢谢」这个双字词。单元自身叠一次如果是正常叠词，
+    # 就保留两份而不是一份。
+    doubled = unit + unit
+    if doubled in _STUTTER_WHITELIST:
+        return doubled
+
+    return unit
+
+
 def strip_fillers(text: str) -> str:
     text = _LEADING_FILLER_RE.sub("", text)
 
-    def _dedupe(m: re.Match) -> str:
-        whole, unit = m.group(0), m.group(1)
-        if whole in _STUTTER_WHITELIST:
-            return whole
-        return unit
-
-    return _STUTTER_RE.sub(_dedupe, text)
+    text = _STUTTER_RE.sub(_dedupe_match, text)
+    return collapse_phrase_repeats(text)
 
 
 # ---------------------------------------------------------------- 2. 空格

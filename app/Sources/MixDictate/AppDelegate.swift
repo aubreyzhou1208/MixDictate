@@ -303,10 +303,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingEnd = 0
             liveInserter.reset()
             state = .recording
-            // 实时写入时浮层是多余的：字已经出现在光标处了，
-            // 再在屏幕底下显示一遍只是噪音
-            if config.showLiveOverlay && !config.liveInsertion {
-                overlay.show(placeholder: "听着呢…")
+            if config.showLiveOverlay {
+                // 实时写入时只给一个小指示器：文字已经在光标处了，浮层
+                // 再显示一遍是噪音；但完全不显示又会让人不确定它在不在工作。
+                overlay.show(
+                    style: config.liveInsertion ? .compact : .fullText,
+                    status: config.liveInsertion ? "正在听写" : "听着呢…"
+                )
             }
             // 实时写入也要靠中间结果，即使浮层关着
             if config.showLiveOverlay || config.liveInsertion {
@@ -371,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 等两轮再报。按下到开口之间总有停顿，第一轮就报是误报 ——
             // 用户会以为麦克风坏了，其实只是他还没开始说。
             if silentTicks >= 2 {
+                overlay.setStatus("没有听到声音")
                 overlay.update("没有听到声音，检查一下麦克风权限和输入设备", isFinal: false)
             }
         }
@@ -429,10 +433,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let tailWav = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
             // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从
             // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
-            overlay.update(
-                recorder.heardSound ? "太短了，没录到内容" : "没有听到声音，检查一下麦克风权限",
-                isFinal: true
-            )
+            let reason = recorder.heardSound
+                ? "太短了，没录到内容"
+                : "没有听到声音，检查一下麦克风权限"
+            overlay.setStatus(reason)
+            overlay.update(reason, isFinal: true)
             overlay.hide(after: 1.6)
             state = .idle
             return
@@ -455,6 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         state = .transcribing
+        overlay.setStatus("整理中…")
         overlay.update("整理中…", isFinal: false)
         let client = TranscriptionClient(config: config)
 
@@ -466,10 +472,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let text = committedText + tail
 
                 guard !text.isEmpty else {
-                    overlay.update(
-                        recorder.heardSound ? "没识别出内容" : "没有听到声音，检查一下麦克风权限",
-                        isFinal: true
-                    )
+                    let reason = recorder.heardSound
+                        ? "没识别出内容"
+                        : "没有听到声音，检查一下麦克风权限"
+                    overlay.setStatus(reason)
+                    overlay.update(reason, isFinal: true)
                     overlay.hide(after: 1.6)
                     state = .idle
                     return
@@ -479,6 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 错误必须显示在浮层上。只写进菜单栏图标是不够的 ——
                 // 菜单栏图标多了会被刘海挤掉，用户根本看不见，
                 // 于是转写失败在他眼里就成了「什么都没发生」。
+                overlay.setStatus("出错了")
                 overlay.update("出错了：\(error.localizedDescription)", isFinal: true)
                 overlay.hide(after: 5)
                 fail(error.localizedDescription)
@@ -496,7 +504,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 不用再粘贴一次，那正是"还要再复制一遍"的慢感来源
         if config.liveInsertion {
             liveInserter.update(to: text)
-            overlay.hide()
+            // 让指示器显示一下"完成"再消失，用户才知道这一轮结束了
+            overlay.setStatus("完成")
+            overlay.hide(after: 0.8)
             state = .idle
             return
         }

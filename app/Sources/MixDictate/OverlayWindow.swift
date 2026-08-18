@@ -7,31 +7,79 @@ import AppKit
 /// 粘贴会粘到一个不存在的输入框里。
 @MainActor
 final class OverlayWindow {
+    /// 两种形态解决的是两个不同的问题。
+    ///
+    /// 实时写入时文字已经在光标处了，浮层再显示一遍纯属噪音 —— 但完全不显示
+    /// 又会让人不确定它到底在不在工作。所以给一个小指示器：只回答
+    /// "它在干活吗"，不重复内容。
+    ///
+    /// 非实时时文字要松手才出现，那段时间里浮层是唯一的反馈，得显示全文。
+    enum Style {
+        case fullText
+        case compact
+    }
+
+    private var style: Style = .fullText
     private var panel: NSPanel?
     private var label: NSTextField?
     private var hideWorkItem: DispatchWorkItem?
 
-    private let width: CGFloat = 560
+    private var width: CGFloat { style == .compact ? 210 : 560 }
     private let horizontalPadding: CGFloat = 20
     private let verticalPadding: CGFloat = 16
 
     // MARK: - 显示
 
-    func show(placeholder: String) {
+    func show(style: Style, status: String) {
         hideWorkItem?.cancel()
         hideWorkItem = nil
 
+        self.style = style
         let panel = existingPanel()
-        label?.stringValue = placeholder
-        label?.textColor = .secondaryLabelColor
+        applyStatus(status)
         layout()
 
         // 不用 makeKeyAndOrderFront —— 那会抢焦点
         panel.orderFrontRegardless()
     }
 
+    /// 更新状态文字。两种形态都生效。
+    func setStatus(_ status: String) {
+        guard panel != nil else { return }
+        applyStatus(status)
+        layout()
+    }
+
+    private func applyStatus(_ status: String) {
+        guard let label else { return }
+
+        guard style == .compact else {
+            label.stringValue = status
+            label.textColor = .secondaryLabelColor
+            return
+        }
+
+        // 小指示器：一个圆点 + 状态。圆点用彩色让人一眼看到"它在动"，
+        // 文字保持次要色，不喧宾夺主。
+        let text = NSMutableAttributedString(
+            string: "● ",
+            attributes: [.foregroundColor: NSColor.systemRed]
+        )
+        text.append(
+            NSAttributedString(
+                string: status,
+                attributes: [.foregroundColor: NSColor.labelColor]
+            )
+        )
+        label.attributedStringValue = text
+    }
+
     func update(_ text: String, isFinal: Bool) {
         guard panel != nil else { return }
+
+        // 小指示器不显示转写内容 —— 那正是它存在的意义
+        guard style == .fullText else { return }
+
         label?.stringValue = text.isEmpty ? "…" : Self.trimmedForDisplay(text)
         label?.textColor = isFinal ? .labelColor : .secondaryLabelColor
         layout()
@@ -92,7 +140,7 @@ final class OverlayWindow {
         effect.maskImage = Self.roundedMask(radius: 14)
 
         let label = NSTextField(wrappingLabelWithString: "")
-        label.font = .systemFont(ofSize: 17)
+        label.font = .systemFont(ofSize: 15)
         label.alignment = .center
         label.isEditable = false
         label.isSelectable = false

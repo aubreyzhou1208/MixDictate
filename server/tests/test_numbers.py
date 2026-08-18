@@ -115,3 +115,20 @@ def test_latin_symbol_words_must_stand_alone():
 
 def test_standalone_latin_at_still_works():
     assert convert_symbols("zhou at gmail.com") == "zhou@gmail.com"
+
+
+# ------------------------------------------------------------ 儿化音
+
+def test_erhua_symbol_variants():
+    """「GitHub 点儿 com」里的「点儿」用「点」是匹配不上的 ——
+    「点」后面跟着「儿」，右侧不是 ASCII，先行断言直接失败。"""
+    assert convert_symbols("GitHub 点儿 com") == "GitHub.com"
+    assert convert_symbols("A 杠儿 B") == "A-B"
+
+
+def test_alternative_at_spelling():
+    assert convert_symbols("zhou 爱特 gmail 点 com") == "zhou@gmail.com"
+
+
+def test_erhua_does_not_break_plain_text():
+    assert convert_symbols("这一点儿也不难") == "这一点儿也不难"
