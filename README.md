@@ -59,6 +59,10 @@ mlx-qwen3-asr 和相关依赖，第一次跑要几分钟。
 
 ### 自动更新
 
+下面这些命令都要**在仓库目录里**跑（就是有 `install.sh` 的那个目录）。
+忘了克隆到哪儿了的话，`./scripts/doctor.sh` 和 `autoupdate.sh status`
+都会把完整路径打出来。
+
 不想每次都手动 `git pull && ./install.sh` 的话：
 
 ```bash

@@ -194,6 +194,7 @@ status)
     else
         echo "自动更新：未开启"
     fi
+    echo "仓库路径：$ROOT"
     echo
     if [ -f "$LOG" ]; then
         echo "最近记录："
