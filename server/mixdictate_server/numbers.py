@@ -69,10 +69,21 @@ def chinese_to_int(text: str) -> int | None:
 
 # ---------------------------------------------------------------- 各条规则
 
+# 「点」在中文里既是小数点也是钟点。跟在后面的这些字说明它是时间，
+# 不是小数：「三点一刻」不是 3.1 刻。
+_TIME_SUFFIX = "刻钟半"
+
 _PERCENT_RE = re.compile(f"百分之([{DIGIT_CHARS}{UNIT_CHARS}]+)")
-_DECIMAL_RE = re.compile(f"([{DIGIT_CHARS}{UNIT_CHARS}]+)点([{DIGIT_CHARS}]+)")
+_DECIMAL_RE = re.compile(
+    f"([{DIGIT_CHARS}{UNIT_CHARS}]+)点([{DIGIT_CHARS}]+)(?![{_TIME_SUFFIX}])"
+)
 _RUN_RE = re.compile(f"[{DIGIT_CHARS}]{{3,}}")
-_COMPOUND_RE = re.compile(f"[{DIGIT_CHARS}]*[{UNIT_CHARS}][{DIGIT_CHARS}{UNIT_CHARS}]*")
+
+# 前面是「点」的复合数不转：「三点十五」是时间，转成「三点15」只会更难读。
+# 真正的小数已经被上面的 _DECIMAL_RE 整体处理掉了。
+_COMPOUND_RE = re.compile(
+    f"(?<!点)[{DIGIT_CHARS}]*[{UNIT_CHARS}][{DIGIT_CHARS}{UNIT_CHARS}]*"
+)
 
 
 def _digits_only(text: str) -> str:

@@ -23,9 +23,17 @@ usage() {
   showLiveOverlay     true / false   录音时显示浮层
   insertionMethod     paste / typing 输入方式
   pushToTalkKeyCode   61=右Option 58=左Option 54=右Command 62=右Control
-  stripFillers        true / false   去掉「嗯」「呃」
-  fullwidthPunctuation true / false  中文标点转全角
   model               Qwen/Qwen3-ASR-0.6B 或 Qwen/Qwen3-ASR-1.7B
+
+对识别结果的加工（都可以单独关掉）：
+  stripFillers        true / false   去掉「嗯」「呃」（默认开，几乎不会误伤）
+  spokenNumbers       true / false   三点一四 → 3.14（默认开）
+  spokenSymbols       true / false   艾特 gmail 点 com → @gmail.com（默认开）
+  fullwidthPunctuation true / false  中文标点转全角（默认开，不改内容）
+  collapseRepeats     true / false   合并卡壳重复（默认关，容易误删）
+
+觉得哪一项在乱改你的话，直接关掉它：
+  ./scripts/config.sh set spokenNumbers false
 USAGE
 }
 

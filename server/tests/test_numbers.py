@@ -132,3 +132,26 @@ def test_alternative_at_spelling():
 
 def test_erhua_does_not_break_plain_text():
     assert convert_symbols("这一点儿也不难") == "这一点儿也不难"
+
+
+# ------------------------------------------------------------ 时间不是小数
+
+def test_clock_time_is_not_a_decimal():
+    """「点」在中文里既是小数点也是钟点。
+
+    这两条是复查时发现的真 bug：
+      三点一刻 → 3.1刻   （「一刻」被当成小数部分）
+      三点十五 → 三点15  （时间被切成一半，比原样更难读）
+    """
+    assert convert_numbers("三点一刻") == "三点一刻"
+    assert convert_numbers("两点一刻开会") == "两点一刻开会"
+    assert convert_numbers("三点十五") == "三点十五"
+    assert convert_numbers("三点半") == "三点半"
+    assert convert_numbers("五点钟") == "五点钟"
+
+
+def test_real_decimals_still_convert():
+    # 加了时间保护之后，正常的小数不能受影响
+    assert convert_numbers("三点一四一五九") == "3.14159"
+    assert convert_numbers("大概是二点五倍") == "大概是2.5倍"
+    assert convert_numbers("三十六点五度") == "36.5度"
