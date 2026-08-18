@@ -11,7 +11,12 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
 
 from . import paths
@@ -19,6 +24,40 @@ from .asr import DEFAULT_MODEL, Transcriber, extract_text
 from .audio import inspect_wav
 from .hotwords import HotwordTable
 from .postprocess import postprocess
+
+
+PORT = int(os.environ.get("MIXDICTATE_PORT", 8765))
+
+
+def ask_live_server(audio: Path) -> tuple[bool, str]:
+    """把同一个文件走 HTTP 打到正在跑的服务上。
+
+    直接调模型能出字、走服务出不来字，说明问题在服务这一层（或者跑着的
+    是残留的旧服务），而不是模型。这两种情况没法靠猜区分。
+    """
+    boundary = f"selftest.{uuid.uuid4()}"
+    payload = audio.read_bytes()
+
+    body = b"".join([
+        f"--{boundary}\r\n".encode(),
+        b'Content-Disposition: form-data; name="audio"; filename="speech.wav"\r\n',
+        b"Content-Type: audio/wav\r\n\r\n",
+        payload,
+        f"\r\n--{boundary}--\r\n".encode(),
+    ])
+
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{PORT}/transcribe",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return True, json.loads(response.read()).get("text", "")
+    except urllib.error.URLError as exc:
+        return False, str(exc)
+    except (ValueError, OSError) as exc:
+        return False, str(exc)
 
 
 def show(label: str, value: str) -> None:
@@ -79,6 +118,15 @@ def main() -> int:
     show("热词纠正后", corrected)
     show("最终输出", postprocess(corrected))
 
+    print("\n" + "-" * 60)
+    print("第 4 步：走正在运行的服务（跟 App 走的是同一条路）")
+    print("-" * 60)
+    reachable, live = ask_live_server(audio)
+    if reachable:
+        show("服务返回", live)
+    else:
+        print(f"连不上服务：{live}")
+
     print("\n" + "=" * 60)
     print("结论")
     print("=" * 60)
@@ -91,8 +139,18 @@ def main() -> int:
         print(f"热词表：{paths.hotwords_path()}")
     elif raw and not postprocess(table.apply(raw)):
         print("模型有输出，但后处理把内容洗没了 —— 这是后处理的 bug。")
+    elif reachable and not live.strip():
+        print("直接调模型有结果，走服务却是空的 —— 问题在服务这一层。")
+        print("最常见的原因是跑着的还是残留的旧服务：")
+        print("  pkill -f mixdictate_server; pkill -x MixDictate; open -a MixDictate")
+    elif not reachable:
+        print("模型这边没问题，但服务连不上。先把服务起起来：")
+        print("  open -a MixDictate")
     else:
-        print("整条链路正常。转写服务这边没问题。")
+        print("整条链路都正常，包括正在运行的服务。")
+        print("现在按住说话键说一句话，文字应该会出现在光标处。")
+        print("如果还是不行，问题在 App 那一侧 —— 把服务日志发出来：")
+        print(f"  open \"{paths.log_dir() / 'server.log'}\"")
     return 0
 
 
