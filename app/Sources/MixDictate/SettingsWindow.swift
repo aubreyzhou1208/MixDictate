@@ -149,8 +149,26 @@ struct SettingsView: View {
                 .padding(6)
             }
 
+            GroupBox("录音") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("回声消除（不录进电脑自己放的声音）", isOn: $model.config.echoCancellation)
+                    Text("边放视频边听写时必开，否则视频里的人声会被当成你说的话。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(6)
+            }
+
             GroupBox("文字处理") {
                 VStack(alignment: .leading, spacing: 8) {
+                    Toggle("只要模型原文，不做任何加工", isOn: $model.config.rawOutput)
+                    Text("打开后下面的开关全部失效。用来判断奇怪的输出是模型听错了\n"
+                         + "还是后处理改坏了 —— 这两件事的解法完全不同。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
                     Toggle("录音时在屏幕上显示实时结果", isOn: $model.config.showLiveOverlay)
                     Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
                     Toggle("合并卡壳时的重复（默认关，容易误删）", isOn: $model.config.collapseRepeats)

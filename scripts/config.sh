@@ -19,6 +19,8 @@ usage() {
   ./scripts/config.sh set <字段> <值>          修改一项
 
 常用字段：
+  echoCancellation    true / false   回声消除，不录进电脑自己放的声音（边放视频边听写时必开）
+  rawOutput           true / false   只要模型原文，不做任何加工（排查"输出很怪"用）
   liveInsertion       true / false   边说边写进输入框（不用等松手，也没有粘贴那一步）
   showLiveOverlay     true / false   录音时显示浮层
   insertionMethod     paste / typing 输入方式

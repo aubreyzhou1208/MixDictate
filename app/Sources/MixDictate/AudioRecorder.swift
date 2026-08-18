@@ -1,4 +1,5 @@
 import AVFoundation
+import Foundation
 
 enum RecorderError: Error {
     case noInputDevice
@@ -47,8 +48,27 @@ final class AudioRecorder {
 
     private(set) var isRecording = false
 
-    func start() throws {
+    /// 语音处理单元只需要开一次。反复切换要重建音频图，没必要。
+    private var voiceProcessingEnabled = false
+
+    /// - Parameter cancelEcho: 打开系统的语音处理单元做回声消除。
+    ///   它知道系统正在往扬声器送什么，就从麦克风信号里把那部分减掉 ——
+    ///   否则你在放视频时听写，视频里的人声会被一起录进去当成你说的话。
+    ///   顺带还有降噪和自动增益。
+    func start(cancelEcho: Bool) throws {
         guard !isRecording else { return }
+
+        // 必须在引擎启动前设置，而且只需要设一次
+        if cancelEcho, !voiceProcessingEnabled {
+            do {
+                try engine.inputNode.setVoiceProcessingEnabled(true)
+                voiceProcessingEnabled = true
+            } catch {
+                // 有些音频设备不支持。不该因此录不了音，退回普通采集。
+                NSLog("MixDictate: 回声消除不可用，改用普通采集：%@",
+                      error.localizedDescription)
+            }
+        }
 
         pcmLock.lock()
         pcm.removeAll(keepingCapacity: true)

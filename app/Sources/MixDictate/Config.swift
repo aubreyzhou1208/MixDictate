@@ -13,6 +13,19 @@ struct Config {
     /// 中文标点转全角。写代码时可能更想要半角，所以留成开关。
     var fullwidthPunctuation: Bool = true
 
+    /// 用系统的语音处理单元做回声消除。
+    ///
+    /// 打开后，电脑自己通过扬声器放出来的声音不会被当成你说的话 ——
+    /// 边放视频边听写时尤其重要。顺带还有降噪和自动增益。
+    var echoCancellation: Bool = true
+
+    /// 只要模型原文，不做任何加工。
+    ///
+    /// 打开这个等于把下面所有开关一次性关掉：去语气词、去重复、
+    /// 数字转换、符号转换、标点全角。用来判断"奇怪的输出"到底是模型
+    /// 听错了还是后处理改坏了 —— 这两件事的解法完全不同。
+    var rawOutput: Bool = false
+
     /// 合并卡壳时的重复。**默认关闭** —— 「超级超级好」是刻意的强调，
     /// 不是卡壳，而删错的代价比留着重复大得多。
     var collapseRepeats: Bool = false
@@ -109,6 +122,10 @@ extension Config: Codable {
             ?? fallback.stripFillers
         fullwidthPunctuation = try c.decodeIfPresent(Bool.self, forKey: .fullwidthPunctuation)
             ?? fallback.fullwidthPunctuation
+        echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation)
+            ?? fallback.echoCancellation
+        rawOutput = try c.decodeIfPresent(Bool.self, forKey: .rawOutput)
+            ?? fallback.rawOutput
         collapseRepeats = try c.decodeIfPresent(Bool.self, forKey: .collapseRepeats)
             ?? fallback.collapseRepeats
         spokenNumbers = try c.decodeIfPresent(Bool.self, forKey: .spokenNumbers)

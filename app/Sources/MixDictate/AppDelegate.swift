@@ -296,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard state == .idle || state == .failed else { return }
         do {
-            try recorder.start()
+            try recorder.start(cancelEcho: config.echoCancellation)
             silentTicks = 0
             committedText = ""
             pendingText = ""

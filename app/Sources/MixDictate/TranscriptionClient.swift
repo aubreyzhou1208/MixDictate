@@ -80,6 +80,10 @@ struct TranscriptionClient {
     private func body(wav: Data, boundary: String, partial: Bool) -> Data {
         var body = Data()
 
+        // 只要原文时，所有加工开关一次性关掉 —— 用一个地方统一决定，
+        // 比在每个字段上各写一遍条件更不容易漏。
+        let raw = config.rawOutput
+
         func line(_ string: String) {
             body.append(contentsOf: Array(string.utf8))
         }
@@ -92,23 +96,23 @@ struct TranscriptionClient {
 
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"strip_fillers\"\r\n\r\n")
-        line("\(config.stripFillers)\r\n")
+        line("\(raw ? false : config.stripFillers)\r\n")
 
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"collapse_repeats\"\r\n\r\n")
-        line("\(config.collapseRepeats)\r\n")
+        line("\(raw ? false : config.collapseRepeats)\r\n")
 
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"fullwidth_punct\"\r\n\r\n")
-        line("\(config.fullwidthPunctuation)\r\n")
+        line("\(raw ? false : config.fullwidthPunctuation)\r\n")
 
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"spoken_numbers\"\r\n\r\n")
-        line("\(config.spokenNumbers)\r\n")
+        line("\(raw ? false : config.spokenNumbers)\r\n")
 
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"spoken_symbols\"\r\n\r\n")
-        line("\(config.spokenSymbols)\r\n")
+        line("\(raw ? false : config.spokenSymbols)\r\n")
 
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"partial\"\r\n\r\n")
