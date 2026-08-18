@@ -1,6 +1,17 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import CoreGraphics
+
+/// 注入结果。不用 Bool 是因为失败有两种完全不同的原因，
+/// 需要告诉用户的话也完全不同。
+enum InjectionResult {
+    case inserted
+    /// 没有辅助功能权限
+    case needsAccessibility
+    /// 某个 App 开启了安全输入模式，系统拦截了所有合成按键
+    case blockedBySecureInput
+}
 
 /// 把文字送进当前光标所在的输入框。
 ///
@@ -9,14 +20,15 @@ import CoreGraphics
 enum TextInjector {
     private static let vKeyCode: CGKeyCode = 9
 
-    /// 没有辅助功能权限时，系统会**静默丢弃**合成的按键事件 —— 不报错、
-    /// 不弹窗，用户看到的就是"按了没反应"。所以每次注入前都要复查：
-    /// 权限可能在 App 运行期间被撤销，也可能重新编译后失效。
-    /// 返回 false 表示没注入成功，调用方要告诉用户。
+    /// 注入前必须逐项复查。这两个条件都会让系统**静默丢弃**合成的按键 ——
+    /// 不报错、不弹窗，用户看到的就是"按了没反应"：
+    ///
+    ///   · 没有辅助功能权限（可能在运行期间被撤销，重新编译后也会失效）
+    ///   · 有 App 开着安全输入模式（密码框、某些终端）
+    ///
+    /// 两种情况下文字都已经在剪贴板里，用户至少能自己按 Cmd+V。
     @discardableResult
-    static func insert(_ text: String) -> Bool {
-        guard !text.isEmpty else { return false }
-
+    static func insert(_ text: String) -> InjectionResult {
         let pasteboard = NSPasteboard.general
         let previous = pasteboard.string(forType: .string)
 
@@ -24,13 +36,15 @@ enum TextInjector {
         pasteboard.setString(text, forType: .string)
 
         guard AXIsProcessTrusted() else {
-            // 文字已经在剪贴板里了，用户至少能自己 Cmd+V —— 不还原剪贴板
-            return false
+            return .needsAccessibility
+        }
+        guard !IsSecureEventInputEnabled() else {
+            return .blockedBySecureInput
         }
 
         // 给一点时间：用户刚松开说话键，修饰键状态需要先落定，
         // 否则合成的 Cmd+V 可能被残留的 Option 污染成别的快捷键。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             postPaste()
 
             // 粘贴是异步的，等目标 App 真正读完剪贴板再还原
@@ -41,7 +55,7 @@ enum TextInjector {
                 }
             }
         }
-        return true
+        return .inserted
     }
 
     private static func postPaste() {
@@ -55,12 +69,20 @@ enum TextInjector {
         down.flags = .maskCommand
         up.flags = .maskCommand
 
-        down.post(tap: .cgAnnotatedSessionEventTap)
-        up.post(tap: .cgAnnotatedSessionEventTap)
+        // 投递到 HID 层。用 .cgAnnotatedSessionEventTap 的话，不少 App
+        // 根本收不到合成事件 —— 表现又是"按了没反应"。
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     static var hasAccessibilityPermission: Bool {
         AXIsProcessTrusted()
+    }
+
+    /// 哪个 App 开着安全输入模式查不出来（系统不提供接口），
+    /// 但至少能告诉用户是这件事挡住了。
+    static var isSecureInputActive: Bool {
+        IsSecureEventInputEnabled()
     }
 
     @discardableResult
@@ -68,5 +90,4 @@ enum TextInjector {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         return AXIsProcessTrustedWithOptions([key: prompt] as CFDictionary)
     }
-
 }

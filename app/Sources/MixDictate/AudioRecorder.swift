@@ -23,6 +23,11 @@ final class AudioRecorder {
     /// 只会安静地送来一串零 —— 不显式检查就完全看不出区别。
     private var peak: Float = 0
 
+    /// 本次录音有没有收到过非静音的样本。跟 peak 不同，这个不会被读取清零。
+    /// 放在录音器里而不是界面层：原来它是在浮层的定时器里维护的，
+    /// 一旦用户关掉浮层，这个标志永远是 false，会误报「没有听到声音」。
+    private var sawSound = false
+
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
@@ -38,6 +43,7 @@ final class AudioRecorder {
         pcmLock.lock()
         pcm.removeAll(keepingCapacity: true)
         peak = 0
+        sawSound = false
         pcmLock.unlock()
 
         let input = engine.inputNode
@@ -76,7 +82,14 @@ final class AudioRecorder {
         return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
     }
 
-    /// 读取并清零峰值音量（0…1）。持续为 0 就说明麦克风没在工作。
+    /// 本次录音是否听到过真实声音。全程为 false 基本就是麦克风没工作。
+    var heardSound: Bool {
+        pcmLock.lock()
+        defer { pcmLock.unlock() }
+        return sawSound
+    }
+
+    /// 读取并清零峰值音量（0…1）。给浮层做实时提示用。
     func consumePeakLevel() -> Float {
         pcmLock.lock()
         let value = peak
@@ -138,7 +151,9 @@ final class AudioRecorder {
         channel[0].withMemoryRebound(to: UInt8.self, capacity: byteCount) { bytes in
             pcm.append(bytes, count: byteCount)
         }
-        peak = max(peak, Float(framePeak) / Float(Int16.max))
+        let level = Float(framePeak) / Float(Int16.max)
+        peak = max(peak, level)
+        if level > 0.01 { sawSound = true }
         pcmLock.unlock()
     }
 

@@ -15,8 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 只会让松手后的最终结果排在后面等更久。
     private var partialInFlight = false
     private var permissionTimer: Timer?
-    /// 本次录音有没有收到过非静音的样本
-    private var heardAudio = false
     /// 连续多少次检测到静音。第一次检测时用户往往还没开口，
     /// 立刻报「没有听到声音」是误报。
     private var silentTicks = 0
@@ -253,7 +251,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .idle || state == .failed else { return }
         do {
             try recorder.start()
-            heardAudio = false
             silentTicks = 0
             state = .recording
             if config.showLiveOverlay {
@@ -292,9 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
 
         if recorder.consumePeakLevel() > 0.01 {
-            heardAudio = true
             silentTicks = 0
-        } else if !heardAudio {
+        } else if !recorder.heardSound {
             silentTicks += 1
             // 等两轮再报。按下到开口之间总有停顿，第一轮就报是误报 ——
             // 用户会以为麦克风坏了，其实只是他还没开始说。
@@ -336,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从
             // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
             overlay.update(
-                heardAudio ? "太短了，没录到内容" : "没有听到声音，检查一下麦克风权限",
+                recorder.heardSound ? "太短了，没录到内容" : "没有听到声音，检查一下麦克风权限",
                 isFinal: true
             )
             overlay.hide(after: 1.6)
@@ -353,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let text = try await client.transcribe(wav: wav)
                 guard !text.isEmpty else {
                     overlay.update(
-                        heardAudio ? "没识别出内容" : "没有听到声音，检查一下麦克风权限",
+                        recorder.heardSound ? "没识别出内容" : "没有听到声音，检查一下麦克风权限",
                         isFinal: true
                     )
                     overlay.hide(after: 1.6)
@@ -364,13 +360,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 先把最终结果显示出来，用户能看到它跟中间结果差在哪
                 overlay.update(text, isFinal: true)
 
-                if TextInjector.insert(text) {
+                switch TextInjector.insert(text) {
+                case .inserted:
                     overlay.hide(after: 1.2)
-                } else {
-                    // 没有辅助功能权限时系统会静默丢掉合成的按键 ——
-                    // 必须明确告诉用户，否则表现就是"按了没反应"
+                case .needsAccessibility:
                     overlay.hide()
                     reportAccessibilityMissing()
+                case .blockedBySecureInput:
+                    // 安全输入模式下系统拦截一切合成按键。文字已经在剪贴板里了。
+                    overlay.update("安全输入模式挡住了自动输入，按 Cmd+V 粘贴", isFinal: true)
+                    overlay.hide(after: 4)
                 }
                 state = .idle
             } catch {
