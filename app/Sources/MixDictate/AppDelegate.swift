@@ -7,13 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var monitor: HotKeyMonitor?
     private let recorder = AudioRecorder()
     private var config = Config.load()
+    private var server: ServerProcess!
     private var lastError: String?
 
     private enum State {
-        case idle, recording, transcribing, failed
+        case launching, idle, recording, transcribing, failed
     }
 
-    private var state: State = .idle {
+    private var state: State = .launching {
         didSet { refreshStatusItem() }
     }
 
@@ -27,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestMicrophoneAccess()
         TextInjector.ensureAccessibilityPermission(prompt: true)
 
+        server = ServerProcess(config: config)
+        Task { @MainActor in await startServer() }
+
         monitor = HotKeyMonitor(
             keyCode: config.pushToTalkKeyCode,
             onPress: { [weak self] in self?.beginRecording() },
@@ -37,11 +41,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor?.stop()
+        server?.stop()
+    }
+
+    // MARK: - 转写服务
+
+    private func startServer() async {
+        state = .launching
+        switch await server.start() {
+        case .ready:
+            state = .idle
+            lastError = nil
+            buildMenu()
+        case .failed(let message):
+            fail(message)
+        case .stopped, .starting:
+            fail("服务状态异常")
+        }
+    }
+
+    @objc private func restartServer() {
+        server.stop()
+        Task { @MainActor in await startServer() }
+    }
+
+    @objc private func openServerLog() {
+        NSWorkspace.shared.open(ServerProcess.logURL)
     }
 
     // MARK: - 录音 → 转写 → 插入
 
     private func beginRecording() {
+        if state == .launching {
+            // 首次启动在加载模型（或下载模型），这时候按键没用，
+            // 但不能默默吞掉 —— 用户会以为快捷键坏了
+            NSSound.beep()
+            return
+        }
         guard state == .idle || state == .failed else { return }
         do {
             try recorder.start()
@@ -124,6 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let tint: NSColor?
 
         switch state {
+        case .launching:
+            symbol = "hourglass"
+            tint = nil
         case .idle:
             symbol = "mic"
             tint = nil
@@ -154,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var fallbackTitle: String {
         switch state {
+        case .launching:    return "⏸"
         case .idle:         return "🎙"
         case .recording:    return "🔴"
         case .transcribing: return "⏳"
@@ -163,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var tooltip: String {
         switch state {
+        case .launching:    return "MixDictate · 正在启动转写服务…"
         case .idle:         return "MixDictate · 按住说话键开始"
         case .recording:    return "正在录音…"
         case .transcribing: return "正在转写…"
@@ -191,6 +232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem(title: "编辑热词表…", action: #selector(openHotwords), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "检查服务状态", action: #selector(checkServer), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "重启转写服务", action: #selector(restartServer), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "查看服务日志…", action: #selector(openServerLog), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MixDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -221,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             else {
                 let alert = NSAlert()
                 alert.messageText = "拿不到热词表路径"
-                alert.informativeText = "转写服务没在跑。先执行 make server。"
+                alert.informativeText = "转写服务没在跑。用菜单里的「重启转写服务」再试一次。"
                 alert.runModal()
                 return
             }
@@ -244,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     """
             } catch {
                 alert.messageText = "连不上服务"
-                alert.informativeText = "先在项目目录里运行 make server"
+                alert.informativeText = "用菜单里的「重启转写服务」，还不行就看服务日志。"
             }
             alert.runModal()
         }

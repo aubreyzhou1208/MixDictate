@@ -17,9 +17,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 os.environ.setdefault("MIXDICTATE_BACKEND", "mock")
 os.environ.setdefault("MIXDICTATE_WARMUP", "0")
+# 指向包内的种子词表。必须在 import main 之前设好 —— main 在模块级
+# 就解析路径了，晚设一步就会去碰真实的 Application Support 目录。
 os.environ.setdefault(
     "MIXDICTATE_HOTWORDS",
-    str(Path(__file__).resolve().parents[2] / "config" / "hotwords.txt"),
+    str(Path(__file__).resolve().parents[1] / "mixdictate_server" / "default_hotwords.txt"),
 )
 
 from mixdictate_server.main import app  # noqa: E402

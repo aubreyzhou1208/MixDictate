@@ -24,3 +24,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["mixdictate_server*"]
+
+[tool.setuptools.package-data]
+# 种子热词表要跟着包一起装，否则装到 venv 里之后没东西可播种
+mixdictate_server = ["default_hotwords.txt"]

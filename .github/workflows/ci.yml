@@ -66,4 +66,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck scripts/*.sh
+        run: shellcheck install.sh scripts/*.sh

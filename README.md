@@ -13,37 +13,53 @@ MixDictate 输出      这个 pipeline 的 latency 有点高，我们要不要�
 
 ---
 
-## 状态
+## 安装
 
-**早期原型。** Python 服务端有 27 个测试覆盖；Swift 端由 CI 在 Apple Silicon runner 上编译验证，
-但**完整的录音 → 转写 → 注入流程还没在真机上端到端跑过** —— 麦克风、辅助功能权限、
-真实模型推理这几段需要人工验证。
+一条命令：
 
-## 环境要求
+```bash
+./install.sh
+```
 
-- Apple Silicon Mac（M1/M2/M3/M4），16GB 内存跑 0.6B 模型很宽裕
+它会建好 Python 环境、装依赖、编译 App、装进「应用程序」文件夹。因为要下载
+mlx-qwen3-asr 和相关依赖，第一次跑要几分钟。
+
+装完之后**就是个正常的 macOS App** —— 在启动台或「应用程序」里双击就能用，
+转写服务由 App 自己拉起来和关掉，不用再开终端。
+
+### 环境要求
+
+- Apple Silicon Mac（M1/M2/M3/M4）—— MLX 依赖 Metal，Intel Mac 跑不了
 - macOS 13+
-- Python 3.10+、Xcode Command Line Tools（`xcode-select --install`）
+- Python 3.10+、Xcode 命令行工具（`xcode-select --install`）
 
-## 上手
+### 首次启动
+
+两件一次性的事：
+
+**授权**
+
+| 权限 | 怎么给 |
+|---|---|
+| 麦克风 | 自动弹窗，点「允许」 |
+| 辅助功能 | 手动：系统设置 › 隐私与安全性 › 辅助功能 → `+` → 选「应用程序」里的 MixDictate → 打开开关 |
+
+没有辅助功能权限的话，转写能跑，但文字插不进输入框。
+
+**等模型下载** —— 菜单栏图标是沙漏时说明还在启动，首次要从 Hugging Face 拉模型，
+几分钟正常。变成麦克风图标就能用了。
+
+### 开机自启
 
 ```bash
-make setup     # 建虚拟环境，装依赖（含 mlx-qwen3-asr）
-make server    # 启动本地转写服务，保持这个终端开着
+./scripts/autostart.sh install     # 装
+./scripts/autostart.sh status      # 查
+./scripts/autostart.sh uninstall   # 卸
 ```
 
-另开一个终端：
+## 用法
 
-```bash
-make run       # 编译并启动菜单栏 App
-```
-
-首次运行要给两个权限：
-
-| 权限 | 怎么给 | 不给会怎样 |
-|---|---|---|
-| 麦克风 | 自动弹窗，点允许 | 录不到音 |
-| 辅助功能 | 系统设置 › 隐私与安全性 › 辅助功能，手动添加 `MixDictate.app` | 能转写，但文字插不进输入框 |
+**按住右 Option 说话，松开。** 文字出现在光标处。
 
 ## 菜单栏图标
 
@@ -51,23 +67,21 @@ MixDictate 不进 Dock、不出现在 Cmd+Tab，只在系统状态栏（时钟�
 
 | 图标 | 状态 |
 |---|---|
+| 沙漏 | 正在启动转写服务 |
 | 麦克风（跟随明暗自动反色） | 待命 |
 | 红色实心麦克风 | 正在录音 |
 | 波形 | 正在转写 |
 | 橙色警告三角 | 出错了，点开菜单看原因 |
 
-点图标弹出菜单：编辑热词表、检查服务状态、退出。
+点图标弹菜单：编辑热词表、检查服务状态、重启转写服务、查看服务日志、退出。
 
-用的是 SF Symbols 模板图像，所以浅色模式下是黑的、深色模式下是白的，跟旁边的
-系统图标一致 —— 不是彩色 emoji。
-
-**上手第一次**：按住右 Option 说话，松开。图标从麦克风变红、变波形，然后文字出现在光标处。
-
-第一次转写要等模型加载（约 3-10 秒），之后单次延迟在 1 秒以内。
+用的是 SF Symbols 模板图像，浅色模式下是黑的、深色模式下是白的，跟旁边的系统图标一致。
 
 ## 热词表
 
-改 `config/hotwords.txt`，**保存即生效，不用重启服务**。
+菜单里点「编辑热词表…」，或直接编辑
+`~/Library/Application Support/MixDictate/hotwords.txt`。
+**保存即生效，不用重启。**
 
 ```
 Kubernetes            # 普通热词：解码时偏置 + 输出时统一大小写
@@ -77,9 +91,11 @@ k8s => Kubernetes     # 别名：听错的写法强制改回来
 拍森 => Python
 ```
 
-这是提升准确率**性价比最高**的一环。把你常说的人名、项目名、技术术语加进去，效果比换更大的模型还明显。
+这是提升准确率**性价比最高**的一环。把你常说的人名、项目名、技术术语加进去，
+效果比换更大的模型还明显。
 
-两层机制互补：`context` 偏置是软的（让模型更容易听出这些词），别名替换是硬的（模型仍然听错时按规则改回来）。
+两层机制互补：`context` 偏置是软的（让模型更容易听出这些词），别名替换是硬的
+（模型仍然听错时按规则改回来）。
 
 ## 架构
 
@@ -96,22 +112,41 @@ postprocess()      去填充词 → 中英加空格 → 标点全角化
 TextInjector       写剪贴板 → 合成 Cmd+V → 还原剪贴板
 ```
 
-拆成两个进程是因为模型在 Python/MLX 里，而全局快捷键和文字注入必须用原生 macOS API。HTTP 只走 127.0.0.1。
+拆成两个进程是因为模型在 Python/MLX 里，而全局快捷键和文字注入必须用原生
+macOS API。HTTP 只走 127.0.0.1。
+
+App 启动时先探一次 `/health`：已经有服务在跑就直接接管，否则自己拉起一个，
+退出时只关自己启的那个。
 
 ### 后处理为什么这么写
 
 中英混说有几个规则不能想当然：
 
-- **标点按整句语言判定，不是紧邻字符。** 中文句子经常以英文词结尾（"换个 schema?"），按紧邻字符判断会漏掉这些，而它们恰恰最需要转全角。
+- **标点按整句语言判定，不是紧邻字符。** 中文句子经常以英文词结尾（"换个 schema?"），
+  按紧邻字符判断会漏掉这些，而它们恰恰最需要转全角。
 - **两侧紧贴 ASCII 字母数字时不转。** 保住 `3:30`、`a,b` 这类。
 - **句点规则更严**（前面不是数字、后面是空格或结尾），保住 `3.14` 和 `config.json`。
 - **叠词白名单。** "就是就是"是卡壳要压缩，"谢谢""看看"是正常中文不能动。
 
-这些规则每条都有对应的测试锁着，见 `server/tests/test_postprocess.py`。
+每条都有对应的测试锁着，见 `server/tests/test_postprocess.py`。
+
+## 文件都在哪
+
+```
+~/Library/Application Support/MixDictate/
+├── venv/            App 用的 Python 环境
+├── hotwords.txt     你的热词表
+└── logs/server.log  转写服务日志
+
+~/.config/mixdictate/config.json   可选配置（见下）
+/Applications/MixDictate.app       App 本体
+```
+
+装完之后 App 不再依赖源码目录 —— 仓库可以挪走甚至删掉。
 
 ## 配置
 
-可选，放在 `~/.config/mixdictate/config.json`：
+可选，放在 `~/.config/mixdictate/config.json`，只写想改的字段即可：
 
 ```json
 {
@@ -125,50 +160,48 @@ TextInjector       写剪贴板 → 合成 Cmd+V → 还原剪贴板
 按键码：右 Option `61`、左 Option `58`、右 Command `54`、右 Control `62`。
 默认用右 Option 是因为右 Command 跟很多 App 的快捷键冲突。
 
-更准但更慢的模型：`MIXDICTATE_MODEL=Qwen/Qwen3-ASR-1.7B make server`
+## 排错
 
-## 开机自启
+**菜单栏图标一直是沙漏** —— 在下模型。菜单里「查看服务日志…」能看到进度。
 
-```bash
-./scripts/autostart.sh install     # 装 launchd agent（服务 + App）
-./scripts/autostart.sh status      # 看运行状态
-./scripts/autostart.sh uninstall   # 卸掉
-```
+**图标是橙色三角** —— 点开菜单，第一行就是错误原因。
 
-plist 在安装时按当前仓库路径生成，所以**仓库挪了位置要重新跑一次 install**。
-日志在 `~/Library/Logs/mixdictate/`。
+**文字没插进输入框** —— 辅助功能权限没给。重装 App 后权限会失效（macOS 按
+应用签名记权限），要在系统设置里把旧条目删掉重新添加。
 
-开机后菜单栏图标会比登录晚几秒出现 —— 那几秒在加载模型。
+**说话没反应** —— 确认按的是右 Option 不是左 Option。改键见配置一节。
+如果听到"叮"一声，说明服务还没就绪。
+
+**菜单栏里根本看不到图标** —— 刘海屏图标太多会被挤到刘海后面（退几个别的
+菜单栏 App 试试，或用 Bartender / Ice 管理）；也可能 App 压根没起来，
+在「应用程序」里双击看有没有报错。
 
 ## 开发
 
 ```bash
-make test         # 全部测试，不需要模型，任何平台都能跑
-make server-mock  # 不加载模型空跑服务，用来验证 App→服务链路
+make dev-setup         # 在 server/.venv 建独立的开发环境
+make test              # 全部测试，不需要模型，任何平台都能跑
+make dev-server        # 前台跑服务，看实时日志
+make dev-server-mock   # 不加载模型空跑，验证链路
+make app               # 只重新编译 App
 ```
 
-测试分两层：`test_postprocess.py` 测纯函数，`test_server.py` 用 mock 后端
-走完整 HTTP 链路（multipart → 热词 → 后处理 → JSON）。两层都不需要 mlx，
-所以 CI 在 Linux 上就能跑。
+开发环境（`server/.venv`）和 App 用的环境
+（`~/Library/Application Support/MixDictate/venv`）是分开的，互不干扰。
 
-CI（`.github/workflows/ci.yml`）跑三个 job：Python 测试（3.10 / 3.12）、
+测试分三层：`test_postprocess.py` 测纯函数，`test_paths.py` 测路径解析和词表播种，
+`test_server.py` 用 mock 后端走完整 HTTP 链路。都不需要 mlx，所以 CI 在 Linux 上就能跑。
+
+CI（`.github/workflows/ci.yml`）跑四个 job：Python 测试（3.10 / 3.12）、
 Apple Silicon runner 上的 Swift 编译 + bundle 校验、shellcheck。
 
-## 排错
+## 状态
 
-**菜单栏图标是 ⚠️** —— 点开菜单看错误信息，或选"检查服务状态"。
-
-**文字没插进输入框** —— 辅助功能权限没给，或者改代码重新编译后权限失效了。macOS 按应用签名记权限，重新构建后要在系统设置里把旧条目删掉重新添加。
-
-**说话没反应** —— 确认按的是右 Option 不是左 Option。想换键改配置文件里的 `pushToTalkKeyCode`。
-
-**菜单栏里根本看不到图标** —— 两种可能：一是刘海屏上图标太多被挤到刘海后面了
-（先退几个别的菜单栏 App 试试，或者用 Bartender / Ice 这类工具管理）；
-二是 App 根本没起来，跑 `./scripts/autostart.sh status` 或直接
-`open build/MixDictate.app` 看有没有报错。
-
-**第一次转写很慢** —— 正常，在加载模型。`make server` 启动时已经预热了，如果还慢就是模型在从 Hugging Face 下载。
+**早期原型。** Python 侧 32 个测试覆盖，Swift 侧由 CI 在 Apple Silicon runner
+上编译验证。但**完整的录音 → 转写 → 注入流程还没在真机上端到端跑过** ——
+权限授予、真实模型推理、剪贴板注入在各 App 里的行为，这几段需要人工验证。
 
 ## 许可
 
-MIT。用到的 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 模型是 Apache 2.0，[mlx-qwen3-asr](https://github.com/moona3k/mlx-qwen3-asr) 提供 Apple Silicon 推理。
+MIT。用到的 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 模型是 Apache 2.0，
+[mlx-qwen3-asr](https://github.com/moona3k/mlx-qwen3-asr) 提供 Apple Silicon 推理。

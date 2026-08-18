@@ -1,103 +1,80 @@
 #!/usr/bin/env bash
-# 装 / 卸开机自启（launchd LaunchAgent）。
+# 装 / 卸开机自启。
 #
 #   ./scripts/autostart.sh install
 #   ./scripts/autostart.sh uninstall
 #   ./scripts/autostart.sh status
 #
-# 装两个 agent：转写服务 + 菜单栏 App。plist 在安装时按当前仓库路径生成，
-# 所以仓库挪了位置要重新跑一次 install。
+# 只需要拉起 App —— 转写服务由 App 自己启动和关闭，不用单独管。
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/mixdictate"
+LABEL="dev.mixdictate.app"
+PLIST="$AGENTS/$LABEL.plist"
+APP_BINARY="/Applications/MixDictate.app/Contents/MacOS/MixDictate"
 
-SERVER_LABEL="dev.mixdictate.server"
-APP_LABEL="dev.mixdictate.app"
-SERVER_PLIST="$AGENTS/$SERVER_LABEL.plist"
-APP_PLIST="$AGENTS/$APP_LABEL.plist"
+die_missing() {
+    echo "找不到 $APP_BINARY —— 先跑一次 ./install.sh" >&2
+    exit 1
+}
 
-PYTHON="$ROOT/server/.venv/bin/python"
-APP_BINARY="$ROOT/build/MixDictate.app/Contents/MacOS/MixDictate"
+case "${1:-}" in
+install)
+    [ -x "$APP_BINARY" ] || die_missing
+    mkdir -p "$AGENTS" "$LOGS"
 
-write_plist() {
-    local path="$1" label="$2" program="$3" arg="${4:-}"
-    local args="        <string>$program</string>"
-    [ -n "$arg" ] && args="$args
-        <string>$arg</string>"
-
-    cat > "$path" <<PLIST
+    cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>$label</string>
+    <string>$LABEL</string>
 
     <key>ProgramArguments</key>
     <array>
-$args
+        <string>$APP_BINARY</string>
     </array>
-
-    <key>WorkingDirectory</key>
-    <string>$ROOT</string>
 
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- 崩了自动拉起，但设 10 秒节流，避免配置写错时疯狂重启刷屏 -->
+    <!-- 崩了自动拉起，10 秒节流，避免出问题时疯狂重启刷屏 -->
     <key>KeepAlive</key>
     <true/>
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
     <key>StandardOutPath</key>
-    <string>$LOGS/$label.log</string>
+    <string>$LOGS/$LABEL.log</string>
     <key>StandardErrorPath</key>
-    <string>$LOGS/$label.err.log</string>
+    <string>$LOGS/$LABEL.err.log</string>
 </dict>
 </plist>
-PLIST
-}
+PLIST_EOF
 
-case "${1:-}" in
-install)
-    [ -x "$PYTHON" ] || { echo "找不到 $PYTHON —— 先跑 make setup"; exit 1; }
-    [ -x "$APP_BINARY" ] || { echo "找不到 $APP_BINARY —— 先跑 make app"; exit 1; }
+    # 没装过时 bootout 会返回非 0，不算错误
+    launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+    launchctl bootstrap "gui/$UID" "$PLIST"
 
-    mkdir -p "$AGENTS" "$LOGS"
-
-    write_plist "$SERVER_PLIST" "$SERVER_LABEL" "$PYTHON" "-mmixdictate_server.main"
-    write_plist "$APP_PLIST" "$APP_LABEL" "$APP_BINARY"
-
-    # bootout 会在 agent 没装过时返回非 0，这里不算错误
-    launchctl bootout "gui/$UID/$SERVER_LABEL" 2>/dev/null || true
-    launchctl bootout "gui/$UID/$APP_LABEL" 2>/dev/null || true
-
-    launchctl bootstrap "gui/$UID" "$SERVER_PLIST"
-    launchctl bootstrap "gui/$UID" "$APP_PLIST"
-
-    echo "已安装。日志在 $LOGS/"
-    echo "注意：模型加载要几秒，开机后菜单栏图标出现得比登录稍晚。"
+    echo "已安装开机自启。日志在 $LOGS/"
+    echo "登录后菜单栏图标会晚几秒出现 —— 那几秒在加载模型。"
     ;;
 
 uninstall)
-    launchctl bootout "gui/$UID/$SERVER_LABEL" 2>/dev/null || true
-    launchctl bootout "gui/$UID/$APP_LABEL" 2>/dev/null || true
-    rm -f "$SERVER_PLIST" "$APP_PLIST"
-    echo "已卸载。"
+    launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+    rm -f "$PLIST"
+    echo "已卸载开机自启。"
     ;;
 
 status)
-    for label in "$SERVER_LABEL" "$APP_LABEL"; do
-        if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
-            echo "$label  运行中"
-        else
-            echo "$label  未加载"
-        fi
-    done
+    if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+        echo "$LABEL  已加载"
+    else
+        echo "$LABEL  未加载"
+    fi
     ;;
 
 *)

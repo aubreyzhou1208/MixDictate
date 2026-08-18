@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
+from . import paths
 from .asr import DEFAULT_MODEL, Transcriber
 from .hotwords import HotwordTable
 from .postprocess import postprocess
@@ -25,10 +26,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("mixdictate")
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-HOTWORDS_PATH = Path(
-    os.environ.get("MIXDICTATE_HOTWORDS", REPO_ROOT / "config" / "hotwords.txt")
-)
+HOTWORDS_PATH = paths.hotwords_path()
 MODEL = os.environ.get("MIXDICTATE_MODEL", DEFAULT_MODEL)
 PORT = int(os.environ.get("MIXDICTATE_PORT", 8765))
 
