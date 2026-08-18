@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 只会让松手后的最终结果排在后面等更久。
     private var partialInFlight = false
     private var permissionTimer: Timer?
+    /// 本次录音有没有收到过非静音的样本
+    private var heardAudio = false
     private var lastError: String?
 
     private enum State {
@@ -128,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            TextInjector.openAccessibilitySettings()
+            SystemSettings.openAccessibility()
         case .alertSecondButtonReturn:
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
@@ -232,6 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .idle || state == .failed else { return }
         do {
             try recorder.start()
+            heardAudio = false
             state = .recording
             if config.showLiveOverlay {
                 overlay.show(placeholder: "听着呢…")
@@ -266,8 +269,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestPartial() {
-        guard state == .recording, !partialInFlight else { return }
-        guard let wav = recorder.snapshotWAV() else { return }
+        guard state == .recording else { return }
+
+        if recorder.consumePeakLevel() > 0.01 {
+            heardAudio = true
+        } else if !heardAudio {
+            // 一直是零 —— 别让用户对着一个写着「听着呢」的浮层白说一分钟
+            overlay.update("没有听到声音，检查一下麦克风权限和输入设备", isFinal: false)
+        }
+
+        guard !partialInFlight, let wav = recorder.snapshotWAV() else { return }
 
         partialInFlight = true
         let client = TranscriptionClient(config: config)
@@ -277,6 +288,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let text = try? await client.transcribe(wav: wav, partial: true) else { return }
             // 请求飞在路上时用户可能已经松手了，这时别再盖掉最终结果
             guard state == .recording else { return }
+            // 空结果别覆盖掉「没有听到声音」那条提示
+            guard !text.isEmpty else { return }
             overlay.update(text, isFinal: false)
         }
     }
@@ -286,9 +299,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopPartialUpdates()
 
         guard let wav = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
-            // 按得太短或没录到声音，静默回到待命，不打扰用户
+            // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从
+            // 判断是按太短了还是麦克风根本没工作。这两件事必须说清楚。
+            overlay.update(
+                heardAudio ? "太短了，没录到内容" : "没有听到声音，检查一下麦克风权限",
+                isFinal: true
+            )
+            overlay.hide(after: 1.6)
             state = .idle
-            overlay.hide()
             return
         }
 
@@ -300,8 +318,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let text = try await client.transcribe(wav: wav)
                 guard !text.isEmpty else {
+                    overlay.update(
+                        heardAudio ? "没识别出内容" : "没有听到声音，检查一下麦克风权限",
+                        isFinal: true
+                    )
+                    overlay.hide(after: 1.6)
                     state = .idle
-                    overlay.hide()
                     return
                 }
 
@@ -337,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "稍后")
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            TextInjector.openAccessibilitySettings()
+            SystemSettings.openAccessibility()
         }
     }
 
@@ -348,16 +370,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("MixDictate: %@", message)
     }
 
-    // MARK: - 权限
+    // MARK: - 麦克风
 
+    /// 麦克风权限被拒时，macOS **不会报错** —— AVAudioEngine 照常启动、
+    /// tap 照常回调，只是送来的样本全是零。所以"没录到声音"和"录到了静音"
+    /// 在代码里长得一模一样，必须显式检查权限 + 显式检查音量，
+    /// 否则用户看到的就是"浮层出来了但什么都不发生"。
     private func requestMicrophoneAccess() {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             break
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                guard !granted else { return }
+                Task { @MainActor in self?.reportMicrophoneDenied() }
+            }
         default:
-            fail("麦克风权限被拒绝，去系统设置 › 隐私与安全性 › 麦克风 里打开")
+            reportMicrophoneDenied()
+        }
+    }
+
+    private func reportMicrophoneDenied() {
+        fail("麦克风权限被拒 —— 录不到任何声音")
+
+        let alert = NSAlert()
+        alert.messageText = "需要麦克风权限"
+        alert.informativeText = "系统设置 › 隐私与安全性 › 麦克风，把 MixDictate 打开。"
+        alert.addButton(withTitle: "打开设置")
+        alert.addButton(withTitle: "稍后")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            SystemSettings.openMicrophone()
         }
     }
 

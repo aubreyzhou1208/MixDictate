@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 /// 设置界面。改完点保存，说话键立刻生效；换模型需要重启转写服务。
@@ -10,6 +11,7 @@ final class SettingsModel: ObservableObject {
     /// 打开设置时复查一次。权限可能在 App 运行期间被撤销，
     /// 也可能因为重新编译（签名变了）而失效。
     @Published var hasAccessibility = TextInjector.hasAccessibilityPermission
+    @Published var hasMicrophone = SettingsModel.microphoneGranted
 
     /// 保存后回调，让 AppDelegate 决定要不要重挂热键 / 重启服务
     var onSave: ((Config, _ modelChanged: Bool) -> Void)?
@@ -21,10 +23,16 @@ final class SettingsModel: ObservableObject {
         self.config = config
         self.originalModel = config.model
         self.hasAccessibility = TextInjector.hasAccessibilityPermission
+        self.hasMicrophone = SettingsModel.microphoneGranted
+    }
+
+    static var microphoneGranted: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
     func refreshPermissions() {
         hasAccessibility = TextInjector.hasAccessibilityPermission
+        hasMicrophone = SettingsModel.microphoneGranted
     }
 
     // MARK: - 录制说话键
@@ -101,6 +109,25 @@ struct SettingsView: View {
             }
 
             GroupBox("权限") {
+              VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: model.hasMicrophone
+                          ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(model.hasMicrophone ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("麦克风")
+                        Text(model.hasMicrophone
+                             ? "已授权"
+                             : "未授权 —— 录不到声音，浮层会一直空着")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !model.hasMicrophone {
+                        Button("去授权") { SystemSettings.openMicrophone() }
+                    }
+                }
+
                 HStack {
                     Image(systemName: model.hasAccessibility
                           ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -115,9 +142,10 @@ struct SettingsView: View {
                     }
                     Spacer()
                     if !model.hasAccessibility {
-                        Button("去授权") { TextInjector.openAccessibilitySettings() }
+                        Button("去授权") { SystemSettings.openAccessibility() }
                     }
                 }
+              }
                 .padding(6)
             }
 

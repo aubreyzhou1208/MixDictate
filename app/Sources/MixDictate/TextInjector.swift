@@ -69,11 +69,4 @@ enum TextInjector {
         return AXIsProcessTrustedWithOptions([key: prompt] as CFDictionary)
     }
 
-    /// 直接跳到辅助功能设置页 —— 让用户自己在系统设置里翻太容易放弃了
-    static func openAccessibilitySettings() {
-        let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-        )!
-        NSWorkspace.shared.open(url)
-    }
 }

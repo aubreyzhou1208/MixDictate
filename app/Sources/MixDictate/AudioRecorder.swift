@@ -18,6 +18,11 @@ final class AudioRecorder {
     /// 没有锁就是数据竞争，表现为偶发的截断或崩溃。
     private let pcmLock = NSLock()
 
+    /// 上次读取以来的最大音量。用来回答一个很基础但很关键的问题：
+    /// 麦克风到底有没有在给我们声音？没权限时 macOS 不会报错，
+    /// 只会安静地送来一串零 —— 不显式检查就完全看不出区别。
+    private var peak: Float = 0
+
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
@@ -32,6 +37,7 @@ final class AudioRecorder {
 
         pcmLock.lock()
         pcm.removeAll(keepingCapacity: true)
+        peak = 0
         pcmLock.unlock()
 
         let input = engine.inputNode
@@ -68,6 +74,15 @@ final class AudioRecorder {
 
         guard duration >= minimumDuration, !captured.isEmpty else { return nil }
         return Self.makeWAV(pcm: captured, sampleRate: 16_000, channels: 1)
+    }
+
+    /// 读取并清零峰值音量（0…1）。持续为 0 就说明麦克风没在工作。
+    func consumePeakLevel() -> Float {
+        pcmLock.lock()
+        let value = peak
+        peak = 0
+        pcmLock.unlock()
+        return value
     }
 
     /// 录音进行中取一份当前音频的快照，用来做实时转写。
@@ -111,11 +126,19 @@ final class AudioRecorder {
               let channel = out.int16ChannelData
         else { return }
 
-        let byteCount = Int(out.frameLength) * MemoryLayout<Int16>.size
+        let frames = Int(out.frameLength)
+        var framePeak: Int16 = 0
+        for index in 0..<frames {
+            let sample = abs(channel[0][index])
+            if sample > framePeak { framePeak = sample }
+        }
+
+        let byteCount = frames * MemoryLayout<Int16>.size
         pcmLock.lock()
         channel[0].withMemoryRebound(to: UInt8.self, capacity: byteCount) { bytes in
             pcm.append(bytes, count: byteCount)
         }
+        peak = max(peak, Float(framePeak) / Float(Int16.max))
         pcmLock.unlock()
     }
 
