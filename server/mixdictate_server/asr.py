@@ -20,6 +20,62 @@ log = logging.getLogger(__name__)
 DEFAULT_MODEL = "Qwen/Qwen3-ASR-0.6B"
 
 
+def extract_text(result: object) -> str:
+    """从模型返回值里取出转写文本。
+
+    不同版本的 mlx-qwen3-asr 返回的东西不一样：可能是带 .text 的对象、
+    直接的字符串、字典，或者一串分段。原来只认 .text 一种形状，
+    其余情况一律静默变成空字符串 —— 这种失败方式最难查，因为它跟
+    "模型确实没听出内容"长得一模一样。
+    """
+    if result is None:
+        return ""
+
+    if isinstance(result, str):
+        return result.strip()
+
+    if isinstance(result, dict):
+        for key in ("text", "transcription", "transcript"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        segments = result.get("segments")
+        if segments:
+            return join_segments(segments)
+        return ""
+
+    for attribute in ("text", "transcription", "transcript"):
+        value = getattr(result, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    segments = getattr(result, "segments", None)
+    if segments:
+        return join_segments(segments)
+
+    # 分段列表直接被返回的情况
+    if isinstance(result, (list, tuple)) and result:
+        return join_segments(result)
+
+    return ""
+
+
+def join_segments(segments: object) -> str:
+    """把分段列表拼成一整句。段与段之间不加空格 —— 中文不用空格分词。"""
+    if not isinstance(segments, (list, tuple)):
+        return ""
+
+    parts: list[str] = []
+    for segment in segments:
+        if isinstance(segment, str):
+            parts.append(segment)
+        elif isinstance(segment, dict):
+            parts.append(str(segment.get("text", "")))
+        else:
+            parts.append(str(getattr(segment, "text", "")))
+    return "".join(parts).strip()
+
+
 @dataclass
 class ASRResult:
     text: str
@@ -71,7 +127,17 @@ class Transcriber:
                 log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
                 result = self._session.transcribe(audio_path)
 
-        return ASRResult(
-            text=getattr(result, "text", "") or "",
-            language=getattr(result, "language", None),
-        )
+        text = extract_text(result)
+        if not text.strip():
+            # 取不到文字时把返回值的形状打出来。原来这里是
+            # getattr(result, "text", "")，一旦库的返回结构跟假设不一样
+            # 就会静默返回空字符串 —— 表现和"模型没听出来"完全一样，
+            # 排查时会一直往错误的方向找。
+            log.warning(
+                "没能从模型返回值里取到文字。类型=%s 属性=%s 内容=%.400r",
+                type(result).__name__,
+                [a for a in dir(result) if not a.startswith("_")][:20],
+                result,
+            )
+
+        return ASRResult(text=text, language=getattr(result, "language", None))
