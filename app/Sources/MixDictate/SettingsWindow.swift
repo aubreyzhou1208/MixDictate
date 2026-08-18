@@ -85,6 +85,10 @@ final class SettingsModel: ObservableObject {
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
+    /// 哪些组是展开的。默认全收起 —— 这些设置调好一次就很少再动，
+    /// 却每次打开设置都要占掉整屏高度。
+    @State private var expanded: Set<String> = []
+
     var body: some View {
         // 设置项只会越加越多，窗口高度却是有限的。不放进 ScrollView 的话，
         // 超出的部分既看不见也够不着 —— 而"够不着"比"难看"严重得多。
@@ -124,181 +128,211 @@ struct SettingsView: View {
         }
     }
 
+    // 说明文字全部收进悬停提示。它们本来占掉了大半个窗口的高度 ——
+    // 而一个非得开这么大才装得下的设置面板，本身就是设计有问题。
+    // 收进 .help() 之后信息一个字没少，只是从"一直摊开"变成"要看才看"。
     @ViewBuilder
     private var settingsGroups: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox("说话键") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("按住这个键说话：")
-                        Spacer()
-                        Button(buttonLabel) {
-                            if model.isCapturingKey {
-                                model.stopCapturingKey()
-                            } else {
-                                model.startCapturingKey()
-                            }
-                        }
-                        .frame(minWidth: 140)
-                    }
-                    Text("点上面的按钮，然后按一下你想用的修饰键。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(6)
-            }
-
-            GroupBox("权限") {
-              VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            GroupBox {
                 HStack {
-                    Image(systemName: model.hasMicrophone
-                          ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(model.hasMicrophone ? .green : .orange)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("麦克风")
-                        Text(model.hasMicrophone
-                             ? "已授权"
-                             : "未授权 —— 录不到声音，浮层会一直空着")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("按住说话")
                     Spacer()
-                    if !model.hasMicrophone {
-                        Button("去授权") { SystemSettings.openMicrophone() }
-                    }
-                }
-
-                HStack {
-                    Image(systemName: model.hasAccessibility
-                          ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(model.hasAccessibility ? .green : .orange)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("辅助功能")
-                        Text(model.hasAccessibility
-                             ? "已授权，可以自动输入文字"
-                             : "未授权 —— 转写正常但文字插不进输入框")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if !model.hasAccessibility {
-                        Button("去授权") { SystemSettings.openAccessibility() }
-                    }
-                }
-              }
-                .padding(6)
-            }
-
-            GroupBox("录音") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("回声消除（默认关，代价见下）", isOn: $model.config.echoCancellation)
-                    Text("打开后电脑自己放的声音不会被录进去，但在 macOS 上有两个躲不开的代价：\n"
-                         + "① 整台电脑的音量会被压低 —— 语音处理单元是给通话用的，\n"
-                         + "   一开启系统就压低其他所有声音，这个行为 macOS 上关不掉。\n"
-                         + "② 它会把输入换成多声道，转换对不上时采集会整个变成静音。\n"
-                         + "挡外放用下面的人声门限就够了，代价小得多。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    HStack {
-                        Text("人声门限")
-                        Slider(value: $model.config.voiceThreshold, in: 0...0.3)
-                        Text(String(format: "%.2f", model.config.voiceThreshold))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 36, alignment: .trailing)
-                    }
-                    Text("低于门限的声音直接丢掉，不送去转写。外放的视频漏进麦克风时\n"
-                         + "通常比你说话弱一个数量级，这一刀就能挡住大部分。\n"
-                         + "调大更能挡外放，调小小声说话也收得到，0 = 关掉。\n"
-                         + "该设多少不用猜 —— 菜单里有「校准人声门限…」，量两次给建议值。\n"
-                         + "想彻底隔绝请戴耳机 —— 声音根本不进麦克风才是真的隔绝。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    HStack {
-                        Text("停顿压到")
-                        Slider(value: $model.config.maxPauseSeconds, in: 0...1.5)
-                        Text(String(format: "%.2fs", model.config.maxPauseSeconds))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 48, alignment: .trailing)
-                    }
-                    Text("送给模型前把长停顿压短。模型判断句子说完没有，主要就是看停顿多长，\n"
-                         + "而「在想下一句」和「这句说完了」在音频里是同一件事，分不开。\n"
-                         + "与其猜，不如把线索削掉：调小就更不会在你停顿时乱加句号，\n"
-                         + "调大更尊重你的停顿。0 = 不压。顺带音频变短，转写也更快。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(6)
-            }
-
-            GroupBox("文字处理") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("只要模型原文，不做任何加工", isOn: $model.config.rawOutput)
-                    Text("打开后下面的开关全部失效。用来判断奇怪的输出是模型听错了\n"
-                         + "还是后处理改坏了 —— 这两件事的解法完全不同。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    Toggle("录音时在屏幕上显示实时结果", isOn: $model.config.showLiveOverlay)
-                    Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
-                    Toggle("合并卡壳时的重复（默认关，容易误删）", isOn: $model.config.collapseRepeats)
-                    Toggle("中文标点转全角（，。？！）", isOn: $model.config.fullwidthPunctuation)
-                    Toggle("口语数字转阿拉伯数字（三点一四 → 3.14）", isOn: $model.config.spokenNumbers)
-                    Toggle("口语符号转符号（艾特 gmail 点 com → @gmail.com）", isOn: $model.config.spokenSymbols)
-                    Toggle("停顿处误加的句号降级成逗号", isOn: $model.config.mergePausePeriods)
-                    Text("关掉全角后标点保持半角，写代码时更顺手。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(6)
-            }
-
-            GroupBox("输入方式") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("边说边写进输入框", isOn: $model.config.liveInsertion)
-                    Text("开启后文字直接出现在光标处，不用等松手，也不再多一次粘贴。\n"
-                         + "代价：模型会边说边修正前面的词，所以你会看到文字被退删重写；\n"
-                         + "而且听写过程中别自己动光标或改字，否则退删会误伤你的内容。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    Picker("输入方式", selection: $model.config.insertionMethod) {
-                        ForEach(InsertionMethod.allCases, id: \.rawValue) { option in
-                            Text(option.label).tag(option.rawValue)
+                    Button(buttonLabel) {
+                        if model.isCapturingKey {
+                            model.stopCapturingKey()
+                        } else {
+                            model.startCapturingKey()
                         }
                     }
-                    .labelsHidden()
-                    Text("先试粘贴。个别 App 会拦截粘贴，那种情况改成逐字输入。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .frame(minWidth: 140)
+                    .help("点一下，然后按你想用的修饰键。听写中按 Esc 取消。")
                 }
                 .padding(6)
             }
 
-            GroupBox("识别模型") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Picker("模型", selection: $model.config.model) {
-                        ForEach(ASRModel.allCases, id: \.rawValue) { option in
-                            Text(option.label).tag(option.rawValue)
-                        }
+            permissionsBox
+
+            section("录音", "人声门限、停顿压缩、回声消除") {
+                Toggle("回声消除", isOn: $model.config.echoCancellation)
+                    .help("""
+                        默认关。打开后电脑自己放的声音不会被录进去，但 macOS 上有两个躲不开的代价：
+                        ① 整台电脑的音量会被压低 —— 语音处理单元是给通话用的，一开启系统就压低其他所有声音，这个行为关不掉。
+                        ② 它会把输入换成多声道，转换对不上时采集会整个变成静音。
+                        挡外放用人声门限就够了，代价小得多。
+                        """)
+
+                slider("人声门限", value: $model.config.voiceThreshold,
+                       range: 0...0.3, format: "%.2f", width: 36,
+                       help: """
+                        低于门限的声音直接丢掉，不送去转写。外放的视频漏进麦克风时通常比你说话弱一个数量级，这一刀就能挡住大部分。
+                        调大更能挡外放，调小小声说话也收得到，0 = 关掉。
+                        该设多少不用猜 —— 菜单里有「校准人声门限…」，量两次给建议值。
+                        想彻底隔绝请戴耳机：声音根本不进麦克风才是真的隔绝。
+                        """)
+
+                slider("停顿压到", value: $model.config.maxPauseSeconds,
+                       range: 0...1.5, format: "%.2fs", width: 48,
+                       help: """
+                        送给模型前把长停顿压短。模型判断句子说完没有主要就是看停顿多长，而「在想下一句」和「这句说完了」在音频里是同一件事，分不开。
+                        与其猜，不如把线索削掉：调小就更不会在你停顿时乱加句号，调大更尊重你的停顿。0 = 不压。
+                        顺带音频变短，转写也更快。
+                        """)
+            }
+
+            section("文字处理", "口语词、数字符号、标点") {
+                Toggle("只要模型原文，不做任何加工", isOn: $model.config.rawOutput)
+                    .help("打开后下面的开关全部失效。用来判断奇怪的输出是模型听错了还是后处理改坏了 —— 这两件事的解法完全不同。")
+
+                Divider()
+
+                Toggle("录音时显示实时浮层", isOn: $model.config.showLiveOverlay)
+                Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
+                Toggle("合并卡壳时的重复", isOn: $model.config.collapseRepeats)
+                    .help("默认关。「超级超级好」是刻意强调不是卡壳，删错的代价比留着重复大得多。")
+                Toggle("中文标点转全角", isOn: $model.config.fullwidthPunctuation)
+                    .help("关掉后标点保持半角，写代码时更顺手。")
+                Toggle("口语数字转阿拉伯数字", isOn: $model.config.spokenNumbers)
+                    .help("三点一四 → 3.14")
+                Toggle("口语符号转符号", isOn: $model.config.spokenSymbols)
+                    .help("艾特 gmail 点 com → @gmail.com")
+                Toggle("停顿处误加的句号降级成逗号", isOn: $model.config.mergePausePeriods)
+                    .help("句号后面跟着「然后」「但是」这类接续词，说明这句还没说完。只改标点，不删字。")
+            }
+
+            section("输入方式", "怎么把文字送进输入框") {
+                Toggle("边说边写进输入框", isOn: $model.config.liveInsertion)
+                    .help("""
+                        开启后文字直接出现在光标处，不用等松手，也不再多一次粘贴。
+                        代价：模型会边说边修正前面的词，所以你会看到文字被退删重写；而且听写过程中别自己动光标或改字，否则退删会误伤你的内容。
+                        """)
+
+                Picker("送进去的方式", selection: $model.config.insertionMethod) {
+                    ForEach(InsertionMethod.allCases, id: \.rawValue) { option in
+                        Text(option.label).tag(option.rawValue)
                     }
-                    .labelsHidden()
-                    Text("换模型后会自动重启转写服务，第一次要下载模型。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(6)
+                .help("先试粘贴。个别 App 会拦截粘贴，那种情况改成逐字输入。")
+            }
+
+            section("识别模型", "换模型会重启转写服务") {
+                Picker("模型", selection: $model.config.model) {
+                    ForEach(ASRModel.allCases, id: \.rawValue) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+                .help("换模型后会自动重启转写服务，第一次要下载模型。")
             }
         }
+    }
+
+    /// 权限都正常时压成一行。它平时是背景信息，出问题时才需要占地方 ——
+    /// 让"一切正常"和"出事了"占一样大的篇幅，等于两边都看不见。
+    @ViewBuilder
+    private var permissionsBox: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                if model.hasMicrophone && model.hasAccessibility {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("麦克风、辅助功能都已授权")
+                            .font(.caption)
+                        Spacer()
+                    }
+                } else {
+                    permissionRow(
+                        granted: model.hasMicrophone,
+                        name: "麦克风",
+                        problem: "未授权 —— 录不到声音",
+                        open: SystemSettings.openMicrophone
+                    )
+                    permissionRow(
+                        granted: model.hasAccessibility,
+                        name: "辅助功能",
+                        problem: "未授权 —— 说话键收不到按键，文字也插不进输入框",
+                        open: SystemSettings.openAccessibility
+                    )
+                }
+            }
+            .padding(6)
+        }
+    }
+
+    @ViewBuilder
+    private func permissionRow(
+        granted: Bool, name: String, problem: String, open: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            Image(systemName: granted
+                  ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(granted ? .green : .orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                if !granted {
+                    Text(problem)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if !granted {
+                Button("去授权", action: open)
+            }
+        }
+    }
+
+    /// 可折叠的一组。默认收起 —— 这些设置调好一次就很少再动，
+    /// 却每次打开设置都要占掉整屏。
+    @ViewBuilder
+    private func section<Content: View>(
+        _ title: String,
+        _ subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        GroupBox {
+            DisclosureGroup(
+                isExpanded: Binding(
+                    get: { expanded.contains(title) },
+                    set: { isOpen in
+                        if isOpen { expanded.insert(title) } else { expanded.remove(title) }
+                    }
+                )
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(6)
+        }
+    }
+
+    @ViewBuilder
+    private func slider(
+        _ title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        format: String,
+        width: CGFloat,
+        help: String
+    ) -> some View {
+        HStack {
+            Text(title)
+            Slider(value: value, in: range)
+            Text(String(format: format, value.wrappedValue))
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: width, alignment: .trailing)
+        }
+        .help(help)
     }
 
     private var buttonLabel: String {
@@ -329,8 +363,10 @@ final class SettingsWindowController {
         //
         // 默认高度按屏幕来定：外接大屏上可以一次看完，
         // 笔记本屏幕上也不会高过可用区域。
+        // 全部收起时内容很矮，默认窗口就按那个来。真要展开几组，
+        // 窗口可以拉大，装不下的部分也能滚。
         let visibleHeight = NSScreen.main?.visibleFrame.height ?? 800
-        let height = min(620, max(420, visibleHeight - 160))
+        let height = min(440, max(320, visibleHeight - 200))
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: height),
