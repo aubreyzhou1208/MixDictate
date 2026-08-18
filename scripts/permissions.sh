@@ -35,6 +35,14 @@ status)
     echo "Bundle ID  $BUNDLE_ID"
     echo "当前签名   ${now:-读不出来}"
 
+    identity="${MIXDICTATE_SIGN_IDENTITY:-MixDictate Dev}"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "$identity"; then
+        echo "签名身份   ${identity}（固定身份，授权不会因重编译失效）"
+    else
+        echo "签名身份   ad-hoc（没有固定身份 —— 每次重编译授权都会失效）"
+        echo "           一劳永逸：./scripts/signing.sh setup"
+    fi
+
     if [ -f "$STAMP" ]; then
         was="$(cat "$STAMP")"
         if [ "$now" = "$was" ]; then

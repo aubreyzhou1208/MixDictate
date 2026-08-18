@@ -47,8 +47,20 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Ad-hoc 签名"
-codesign --force --deep --sign - "$BUNDLE"
+# 有固定身份就用固定身份。差别不在"更安全"，在于 TCC 认的是什么：
+# ad-hoc 没有身份，macOS 只能拿二进制哈希当身份 —— 重编译一次哈希就变，
+# 麦克风和辅助功能的授权全部对不上，而且系统设置里的开关照常显示为开。
+SIGN_IDENTITY="${MIXDICTATE_SIGN_IDENTITY:-MixDictate Dev}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+    echo "==> 用固定身份签名：$SIGN_IDENTITY"
+    codesign --force --sign "$SIGN_IDENTITY" "$BUNDLE"
+    echo "    （权限不会因为重新编译而失效）"
+else
+    echo "==> Ad-hoc 签名"
+    codesign --force --sign - "$BUNDLE"
+    echo "    ⚠️  每次重编译签名都会变，麦克风/辅助功能授权会静默失效。"
+    echo "       一劳永逸：./scripts/signing.sh setup"
+fi
 
 echo
 echo "构建完成： $BUNDLE"
