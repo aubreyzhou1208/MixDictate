@@ -24,6 +24,36 @@ echo "macOS   $(sw_vers -productVersion 2>/dev/null)"
 echo "架构    $(uname -m)"
 echo "python3 $(python3 --version 2>&1)"
 
+# 「我装上的到底是不是最新的」必须能一眼看出来。看不出来的时候，
+# 「改了没生效」和「改了但没修好」长得一模一样，而这两件事完全不同。
+section "版本"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BRANCH="claude/open-source-speech-to-text-9ntena"
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "本地仓库  $(git -C "$ROOT" log -1 --format='%h  %ad  %s' --date=format:'%m-%d %H:%M' 2>/dev/null)"
+    remote_sha="$(git -C "$ROOT" ls-remote --heads origin "$BRANCH" 2>/dev/null | cut -f1)"
+    local_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+    if [ -z "$remote_sha" ]; then
+        echo "远端最新  查不到（可能是断网）"
+    elif [ "$remote_sha" = "$local_sha" ]; then
+        echo "远端最新  ${remote_sha:0:7}  已是最新"
+    else
+        echo "远端最新  ${remote_sha:0:7}  ← 本地落后，跑 ./scripts/autoupdate.sh now"
+    fi
+else
+    echo "不是 git 仓库，无法判断版本"
+fi
+
+# 拉下来了不等于装上了：install.sh 要重新编译再拷进 /Applications。
+# 这一行回答的是「跑着的那个 App 是什么时候编出来的」。
+BIN="$APP/Contents/MacOS/MixDictate"
+if [ -x "$BIN" ]; then
+    echo "已安装 App 编译于  $(stat -f '%Sm' -t '%m-%d %H:%M' "$BIN" 2>/dev/null)"
+    if [ "$BIN" -ot "$ROOT/app/Sources/MixDictate/AppDelegate.swift" ]; then
+        echo "  ⚠️ 源码比它新 —— 装上的是旧版本，跑 ./install.sh"
+    fi
+fi
+
 section "安装状态"
 [ -d "$APP" ]; echo "App 已安装（/Applications）  $(yes_no $?)"
 [ -x "$VENV/bin/python" ]; echo "Python 环境已建立            $(yes_no $?)"

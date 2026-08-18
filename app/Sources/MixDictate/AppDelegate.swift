@@ -271,6 +271,119 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(url)
     }
 
+    // MARK: - 人声门限校准
+
+    /// 量一下「外放漏进麦克风」和「你说话」到底差多少。
+    ///
+    /// 这个门限没法靠猜：它取决于机器、麦克风位置、扬声器音量、房间。
+    /// 让人对着一个 0…0.3 的滑块试错，等于让他在黑暗里调焦。
+    ///
+    /// 量两次就有数了，而且量完还能回答一个更要紧的问题：这两者到底
+    /// 分不分得开。分不开的话调什么门限都没用 —— 那时候该说的是
+    /// 「戴耳机」，不是再给一个看起来很精确的数字。
+    @objc private func calibrateThreshold() {
+        guard state == .idle || state == .failed else {
+            NSSound.beep()
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let intro = NSAlert()
+        intro.messageText = "校准人声门限"
+        intro.informativeText = """
+            分两步，各 4 秒。
+
+            第 1 步：别说话，让视频照常放着。
+            第 2 步：用平时的音量正常说一句话。
+
+            点「开始」后立刻进入第 1 步。
+            """
+        intro.addButton(withTitle: "开始")
+        intro.addButton(withTitle: "取消")
+        guard intro.runModal() == .alertFirstButtonReturn else { return }
+
+        Task { @MainActor in
+            guard let noise = await measureLevel(status: "别说话…") else { return }
+
+            NSApp.activate(ignoringOtherApps: true)
+            let step2 = NSAlert()
+            step2.messageText = String(format: "环境峰值 %.3f", noise)
+            step2.informativeText = "第 2 步：点「开始」后正常说一句话，4 秒。"
+            step2.addButton(withTitle: "开始")
+            step2.addButton(withTitle: "取消")
+            guard step2.runModal() == .alertFirstButtonReturn else { return }
+
+            guard let voice = await measureLevel(status: "说句话…") else { return }
+            showCalibrationResult(noise: noise, voice: voice)
+        }
+    }
+
+    /// 关掉门限录一段，返回这段时间里的最大响度。
+    ///
+    /// 必须关掉门限。开着量到的是「过了门限的声音有多大」，
+    /// 而这里要问的恰恰是「这声音够不够得着门限」。
+    private func measureLevel(status: String) async -> Float? {
+        do {
+            recorder.voiceThreshold = 0
+            try recorder.start(cancelEcho: config.echoCancellation)
+        } catch {
+            reportFailure(error)
+            return nil
+        }
+        overlay.show(style: .compact, status: status)
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        _ = recorder.stop(minimumDuration: 0)
+        overlay.hide(after: 0)
+        return recorder.loudestLevel
+    }
+
+    private func showCalibrationResult(noise: Float, voice: Float) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+
+        // 差得不够开就别给建议。给一个夹在中间的数字会让人以为调好了，
+        // 实际上要么继续漏、要么开始吞字 —— 比直说「分不开」糟糕得多。
+        guard voice > noise * 1.6, voice > 0.02 else {
+            alert.messageText = "这两者分不开"
+            alert.informativeText = String(
+                format: """
+                    环境 %.3f，说话 %.3f —— 差距太小，没有哪个门限能只挡住一边。
+
+                    多半是外放音量太大、麦克风离扬声器太近，\
+                    或者第 2 步没说话、说得太轻。
+
+                    最彻底的办法是戴耳机：声音根本不进麦克风，才是真的隔绝。
+                    """,
+                noise, voice
+            )
+            alert.runModal()
+            return
+        }
+
+        // 取几何平均而不是算术平均：响度是个比例量。0.02 和 0.5 中间该是
+        // 0.1，不是 0.26 —— 算术平均会紧紧贴着大的那一头，门限就偏高了。
+        let base = max(Double(noise), 0.01)
+        let suggested = min(0.3, max(0.01, (base * Double(voice)).squareRoot()))
+        let rounded = (suggested * 100).rounded() / 100
+
+        alert.messageText = String(format: "建议门限 %.2f", rounded)
+        alert.informativeText = String(
+            format: """
+                环境噪声峰值 %.3f，你说话峰值 %.3f，相差 %.1f 倍。
+                当前门限 %.2f。
+
+                新门限落在两者中间：外放挡得住，你说话过得去。
+                """,
+            noise, voice, voice / max(noise, 0.001), config.voiceThreshold
+        )
+        alert.addButton(withTitle: String(format: "设为 %.2f", rounded))
+        alert.addButton(withTitle: "不改")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        config.voiceThreshold = rounded
+        try? config.save()
+    }
+
     /// 每次转写的原始输出和处理后结果。调准确率就看这个文件。
     @objc private func openTranscriptLog() {
         let url = ServerProcess.supportDirectory
@@ -765,6 +878,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "查看服务日志…", action: #selector(openServerLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看转写记录…", action: #selector(openTranscriptLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "播放最近一次录音…", action: #selector(openLastRecording), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "校准人声门限…", action: #selector(calibrateThreshold), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "重新申请辅助功能权限…", action: #selector(requestAccessibilityAgain), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MixDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
