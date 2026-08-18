@@ -81,6 +81,17 @@ else
     echo "还没有日志 —— 服务从来没被启动过"
 fi
 
+section "最近一次录音"
+if [ -f "$LOGS/last_request.wav" ]; then
+    echo "$(ls -lh "$LOGS/last_request.wav" | awk '{print $5}')  $LOGS/last_request.wav"
+    echo "用播放器打开听一下："
+    echo "  open \"$LOGS/last_request.wav\""
+    echo "能听清自己说话 → 录音链路没问题，问题在模型或热词"
+    echo "听不清 / 是静音   → 问题在录音链路（麦克风权限、输入设备）"
+else
+    echo "还没有 —— 说明没有一次完整的转写请求到达过服务端"
+fi
+
 section "转写记录"
 if [ -f "$LOGS/transcripts.log" ]; then
     echo "共 $(grep -c '^  原始:' "$LOGS/transcripts.log" 2>/dev/null || echo 0) 条"

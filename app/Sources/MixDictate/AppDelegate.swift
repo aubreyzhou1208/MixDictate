@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionTimer: Timer?
     /// 本次录音有没有收到过非静音的样本
     private var heardAudio = false
+    /// 连续多少次检测到静音。第一次检测时用户往往还没开口，
+    /// 立刻报「没有听到声音」是误报。
+    private var silentTicks = 0
     private var lastError: String?
 
     private enum State {
@@ -208,6 +211,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(ServerProcess.logURL)
     }
 
+    /// 最近一次录音的原始音频。模型没输出时，先听一下这个 ——
+    /// 能听清自己说话，问题就在模型或热词；听不清，问题在录音链路。
+    @objc private func openLastRecording() {
+        let url = ServerProcess.supportDirectory
+            .appendingPathComponent("logs/last_request.wav")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            let alert = NSAlert()
+            alert.messageText = "还没有录音文件"
+            alert.informativeText = "先按住说话键说一句话，松开后再回来看。"
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     /// 每次转写的原始输出和处理后结果。调准确率就看这个文件。
     @objc private func openTranscriptLog() {
         let url = ServerProcess.supportDirectory
@@ -235,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             heardAudio = false
+            silentTicks = 0
             state = .recording
             if config.showLiveOverlay {
                 overlay.show(placeholder: "听着呢…")
@@ -273,9 +293,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if recorder.consumePeakLevel() > 0.01 {
             heardAudio = true
+            silentTicks = 0
         } else if !heardAudio {
-            // 一直是零 —— 别让用户对着一个写着「听着呢」的浮层白说一分钟
-            overlay.update("没有听到声音，检查一下麦克风权限和输入设备", isFinal: false)
+            silentTicks += 1
+            // 等两轮再报。按下到开口之间总有停顿，第一轮就报是误报 ——
+            // 用户会以为麦克风坏了，其实只是他还没开始说。
+            if silentTicks >= 2 {
+                overlay.update("没有听到声音，检查一下麦克风权限和输入设备", isFinal: false)
+            }
         }
 
         guard !partialInFlight, let wav = recorder.snapshotWAV() else { return }
@@ -506,6 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "重启转写服务", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看服务日志…", action: #selector(openServerLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看转写记录…", action: #selector(openTranscriptLog), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "播放最近一次录音…", action: #selector(openLastRecording), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "重新申请辅助功能权限…", action: #selector(requestAccessibilityAgain), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MixDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
