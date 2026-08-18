@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 同一时刻只允许一个中间请求在飞。模型是串行的，堆积请求
     /// 只会让松手后的最终结果排在后面等更久。
     private var partialInFlight = false
+    private var permissionTimer: Timer?
     private var lastError: String?
 
     private enum State {
@@ -32,12 +33,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshStatusItem()
 
         requestMicrophoneAccess()
-        TextInjector.ensureAccessibilityPermission(prompt: true)
+        checkAccessibilityOrWait()
 
         server = ServerProcess(config: config)
         Task { @MainActor in await startServer() }
 
         installHotKeyMonitor()
+    }
+
+    // MARK: - 辅助功能权限
+
+    /// 全局按键监听（addGlobalMonitorForEvents）本身就需要辅助功能权限。
+    /// 没有它，说话键的按下事件根本传不到 App —— 不是转写失败，而是整个
+    /// 流程压根不启动，用户看到的是「按了完全没反应」。
+    ///
+    /// 所以权限缺失必须当成硬故障，而不是启动时弹一次系统对话框就算了：
+    /// 用户关掉那个对话框之后，App 会一直装作一切正常。
+    private func checkAccessibilityOrWait() {
+        if TextInjector.hasAccessibilityPermission {
+            permissionTimer?.invalidate()
+            permissionTimer = nil
+            return
+        }
+
+        TextInjector.ensureAccessibilityPermission(prompt: true)
+        fail("缺少「辅助功能」权限 —— 说话键收不到任何按键")
+        startPermissionWatch()
+    }
+
+    /// 用户去系统设置里打开开关后，App 要能自己发现并恢复。
+    /// 让用户手动重启 App 是很差的体验，而且他们根本不会知道要这么做。
+    private func startPermissionWatch() {
+        guard permissionTimer == nil else { return }
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.onPermissionTick() }
+        }
+    }
+
+    private func onPermissionTick() {
+        guard TextInjector.hasAccessibilityPermission else { return }
+
+        permissionTimer?.invalidate()
+        permissionTimer = nil
+        lastError = nil
+
+        // 权限是在监听装好之后才拿到的，必须重装一次才会真正生效
+        installHotKeyMonitor()
+        buildMenu()
+        state = .idle
+
+        let alert = NSAlert()
+        alert.messageText = "辅助功能权限已生效"
+        let key = HotKeyMonitor.displayName(for: config.pushToTalkKeyCode)
+        alert.informativeText = "现在按住 \(key) 就可以说话了。"
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func installHotKeyMonitor() {
@@ -71,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         monitor?.stop()
         stopPartialUpdates()
+        permissionTimer?.invalidate()
         server?.stop()
     }
 
@@ -80,8 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state = .launching
         switch await server.start() {
         case .ready:
-            state = .idle
-            lastError = nil
+            // 权限缺失是更严重的故障，服务就绪不该把它的提示盖掉
+            if TextInjector.hasAccessibilityPermission {
+                state = .idle
+                lastError = nil
+            }
             buildMenu()
         case .failed(let message):
             fail(message)
