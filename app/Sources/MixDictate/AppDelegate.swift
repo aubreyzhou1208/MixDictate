@@ -5,6 +5,15 @@ import AVFoundation
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitor: HotKeyMonitor?
+
+    /// 录音/转写期间盯着 Esc 的两个监听。全局的管别的 App 在前台的情况，
+    /// 本地的管我们自己的窗口在前台的情况 —— 少一个就会有一半场景按了没用。
+    private var escapeMonitor: Any?
+    private var localEscapeMonitor: Any?
+
+    /// 每次听写一个编号。取消时 +1，在飞的请求回来发现编号变了就丢弃 ——
+    /// 不这样的话，取消之后一两秒，那句话还是会自己蹦进输入框。
+    private var sessionID = 0
     private let recorder = AudioRecorder()
     private var config = Config.load()
     private var server: ServerProcess!
@@ -272,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        stopEscapeWatch()
         monitor?.stop()
         stopPartialUpdates()
         permissionTimer?.invalidate()
@@ -465,6 +475,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder.voiceThreshold = Float(max(0, min(1, config.voiceThreshold)))
             recorder.maxPauseSeconds = max(0, config.maxPauseSeconds)
             try recorder.start(cancelEcho: config.echoCancellation)
+            sessionID += 1
+            startEscapeWatch()
             silentTicks = 0
             committedText = ""
             pendingText = ""
@@ -492,6 +504,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             fail("麦克风打不开：\(error.localizedDescription)")
         }
+    }
+
+    // MARK: - 中途取消
+
+    /// 录音或转写期间按 Esc 取消。
+    ///
+    /// 中途反悔太常见了 —— 说错了、有人进来了、发现光标根本不在想要的
+    /// 输入框里。在这之前唯一的出路是把话说完、等它写进去、再手动删掉。
+    private func startEscapeWatch() {
+        stopEscapeWatch()
+
+        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard event.keyCode == 53 else { return }  // 53 = Esc
+            guard let self else { return }
+            Task { @MainActor in self.cancelDictation() }
+        }
+
+        // 设置窗口在前台时全局监听收不到事件，得再加一个本地的。
+        // 返回 nil 把这次 Esc 吞掉：正在听写时它的含义就是"取消听写"。
+        localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard event.keyCode == 53, let self else { return event }
+            Task { @MainActor in self.cancelDictation() }
+            return nil
+        }
+    }
+
+    private func stopEscapeWatch() {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        if let localEscapeMonitor { NSEvent.removeMonitor(localEscapeMonitor) }
+        escapeMonitor = nil
+        localEscapeMonitor = nil
+    }
+
+    private func cancelDictation() {
+        guard state == .recording || state == .transcribing else { return }
+
+        // 先让在飞的转写作废。取消之后过一秒那句话自己蹦出来，
+        // 比不能取消更让人措手不及。
+        sessionID += 1
+        stopEscapeWatch()
+        stopPartialUpdates()
+        _ = recorder.stop(minimumDuration: 0)
+
+        // 实时写入模式下已经打进去的字要撤掉 —— 取消却在输入框里留下
+        // 半句话，等于没取消。
+        if config.liveInsertion, !liveInserter.inserted.isEmpty {
+            liveInserter.update(to: "")
+        }
+        liveInserter.reset()
+        committedText = ""
+        pendingText = ""
+        pendingEnd = 0
+
+        overlay.setStatus("已取消")
+        overlay.update("已取消", isFinal: true)
+        overlay.hide(after: 0.8)
+        state = .idle
     }
 
     // MARK: - 边说边转写
@@ -557,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         partialInFlight = true
         let client = TranscriptionClient(config: config)
+        let session = sessionID
 
         Task { @MainActor in
             defer { partialInFlight = false }
@@ -570,8 +642,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("MixDictate: 中间转写失败 %@", error.localizedDescription)
                 return
             }
-            // 请求飞在路上时用户可能已经松手了，这时别再盖掉最终结果
-            guard state == .recording else { return }
+            // 请求飞在路上时用户可能已经松手了，这时别再盖掉最终结果。
+            // 也可能按了 Esc 又开了新一轮，所以还要比对编号 ——
+            // 光看状态的话，上一轮的中间结果会盖到这一轮头上。
+            guard state == .recording, session == sessionID else { return }
             // 空结果别覆盖掉「没有听到声音」那条提示
             guard !text.isEmpty else { return }
 
@@ -602,6 +676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func endRecording() {
         guard state == .recording else { return }
         stopPartialUpdates()
+        stopEscapeWatch()
 
         guard let audio = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {
             // 以前这里是静默返回的，结果就是「按了没反应」—— 用户完全无从
@@ -629,16 +704,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let totalSeconds = recorder.capturedSeconds
         let useFullPass = totalSeconds <= config.fullPassMaxSeconds
 
+        // 记下这次听写的编号。等结果回来时如果编号变了，说明中途按了 Esc，
+        // 这份结果就不该再落进输入框。
+        let session = sessionID
+
         if useFullPass {
             Task { @MainActor in
                 do {
                     let text = try await client.transcribe(wav: audio.full)
+                    guard session == sessionID else { return }
                     guard !text.isEmpty else {
                         reportEmptyResult()
                         return
                     }
                     deliver(text)
                 } catch {
+                    guard session == sessionID else { return }
                     reportFailure(error)
                 }
             }
@@ -661,6 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             do {
                 let tail = try await client.transcribe(wav: audio.tail)
+                guard session == sessionID else { return }
                 let text = committedText + tail
                 guard !text.isEmpty else {
                     reportEmptyResult()
@@ -668,6 +750,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 deliver(text)
             } catch {
+                guard session == sessionID else { return }
                 reportFailure(error)
             }
         }
@@ -1019,7 +1102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let hint = NSMenuItem(
-            title: "按住 \(HotKeyMonitor.displayName(for: config.pushToTalkKeyCode)) 说话，松开插入文字",
+            title: "按住 \(HotKeyMonitor.displayName(for: config.pushToTalkKeyCode)) 说话，松开插入文字（Esc 取消）",
             action: nil,
             keyEquivalent: ""
         )

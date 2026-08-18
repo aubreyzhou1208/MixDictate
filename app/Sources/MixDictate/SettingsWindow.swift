@@ -110,7 +110,10 @@ struct SettingsView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(minWidth: 440, minHeight: 320)
+        // 只约束宽度。给了 minHeight 的话，NSHostingController 会把它变成
+        // 窗口的最小高度约束，窗口就再也拉不小了 —— 而拉不小就永远轮不到
+        // 滚动条出场，因为内容永远装得下。
+        .frame(minWidth: 440)
         // 用户可能开着设置窗口跑去系统设置里授权，回来时要能看到状态更新
         .onReceive(
             NotificationCenter.default.publisher(
@@ -337,7 +340,21 @@ final class SettingsWindowController {
         )
         window.minSize = NSSize(width: 440, height: 320)
         window.title = "MixDictate 设置"
-        window.contentViewController = NSHostingController(rootView: SettingsView(model: model))
+
+        // 关键的一行。NSHostingController 默认会按 SwiftUI 内容的理想尺寸
+        // 给窗口装上约束（sizingOptions 默认含 .preferredContentSize），
+        // 于是窗口被撑成内容那么大、而且**小不下去**：
+        //   · 内容比屏幕高 → 下半截够不着
+        //   · 窗口不能拉小 → ScrollView 永远有富余空间 → 滚动条永远不出现
+        // 加了 ScrollView 却还是滚不动、拉不小，就是卡在这儿。
+        // 清空 sizingOptions 之后，尺寸完全由窗口自己说了算。
+        let hosting = NSHostingController(rootView: SettingsView(model: model))
+        hosting.sizingOptions = []
+        window.contentViewController = hosting
+
+        // contentViewController 赋值时窗口会被重设成控制器的尺寸，
+        // 所以要在这之后再把想要的尺寸设回去
+        window.setContentSize(NSSize(width: 460, height: height))
         window.center()
         window.isReleasedWhenClosed = false
 
