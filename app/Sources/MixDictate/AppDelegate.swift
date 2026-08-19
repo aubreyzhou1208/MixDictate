@@ -23,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 那两段是要接在一起的。只有 Esc 取消才作废。
     private var cancelledSessions: Set<Int> = []
 
+    /// 按下说话键时焦点在哪儿。插入前要比对 —— 听写要好几秒，
+    /// 这期间用户完全可能点到别处去，那时候照插会**落进另一个输入框**，
+    /// 而用户以为自己说的那一大段直接消失了。
+    private var focusAtStart: TextInjector.FocusSnapshot?
+
     /// 最近一次听写录到的最大响度。写进状态文件给 verify.sh 看 ——
     /// "采集是不是全零"这件事骗过我好几轮，必须变成一个能从终端读到的数字。
     private var lastCapturePeak: Float = -1
@@ -98,6 +103,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // "它自己改了我的词表"这件事必须让人看见。学到的时候浮层说一声，
         // 不然词表会在用户不知情的情况下长出新规则。
+        // 实时写入一旦发现自己的记忆跟输入框对不上，立刻停手并告诉用户。
+        // 继续在错误的基础上退删，只会把他自己的字也删掉。
+        liveInserter.onUntrusted = { [weak self] in
+            guard let self else { return }
+            NSLog("MixDictate: 实时写入的记忆跟输入框对不上，已停止改写")
+            overlay.setStatus("实时写入已停止")
+            overlay.update("输入框内容跟预期不符，已停止改写。松手后完整结果会复制到剪贴板。", isFinal: false)
+        }
+
         corrections.onLearned = { [weak self] wrong, right in
             guard let self else { return }
             overlay.show(style: .compact, status: "学会了")
@@ -547,6 +561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder.maxPauseSeconds = max(0, config.maxPauseSeconds)
             try recorder.start(cancelEcho: config.echoCancellation)
             sessionID += 1
+            focusAtStart = TextInjector.focusSnapshot()
             lastStartLatencyMs = recorder.startLatencyMs
             // 上一轮的观察还没到时间就作废：新一轮马上要往同一个输入框里写，
             // 再去比对上一段就会把两轮的内容混在一起
@@ -915,8 +930,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 把最终文字送到该去的地方。两条路都会走到这里：正常转写完，
     /// 或者直接复用最后一次中间结果。
+    /// 文字送不进原来那个输入框时的兜底：**绝不丢，交给剪贴板。**
+    ///
+    /// 没有这一步的话，用户说了半分钟、中途点了一下别处，那段话就直接
+    /// 没了 —— 而他根本不知道发生了什么。
+    private func deliverToClipboard(_ text: String, reason: String) {
+        TextInjector.copyToPasteboard(text)
+        overlay.show(style: .fullText, status: reason)
+        overlay.update("\(reason)\n已复制，按 Cmd+V 粘贴：\n\(text)", isFinal: true)
+        overlay.hide(after: 10)
+        NSLog("MixDictate: %@ —— 文字已复制到剪贴板", reason)
+    }
+
     private func deliver(_ text: String, session: Int) {
         let stale = isStale(session)
+
+        // 焦点变了就绝不往下插。插进别人的输入框比不插糟得多，
+        // 而且用户看不出文字去了哪儿。
+        if let focus = focusAtStart, !focus.isCurrent() {
+            deliverToClipboard(text, reason: "焦点已经不在原来那个输入框")
+            corrections.cancel()
+            if !stale { state = .idle }
+            return
+        }
+
+        // 实时写入过程中发现记忆对不上，已经停下了 —— 那时候输入框里
+        // 已经有半截文字，再插一遍只会更乱。完整结果交给剪贴板。
+        if config.liveInsertion, !liveInserter.trusted {
+            deliverToClipboard(text, reason: "实时写入已中断（输入框内容被改过）")
+            if !stale { state = .idle }
+            return
+        }
+
 
         // 用户已经在说下一段了。这一段的文字照样要插进去 —— 它们本来就是
         // 要接在一起的 —— 但界面归新的那一段管，别去动状态和浮层。

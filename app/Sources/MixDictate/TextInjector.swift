@@ -273,6 +273,41 @@ enum TextInjector {
         return value as? String
     }
 
+    /// 开始听写时记下焦点在哪儿。
+    ///
+    /// 听写要好几秒，这期间用户完全可能点到别的地方去。不比对的话，
+    /// 文字会**落进另一个输入框**，而用户以为它丢了。
+    struct FocusSnapshot {
+        let pid: pid_t
+        let element: AXUIElement?
+
+        /// 现在的焦点还是当初那个吗
+        func isCurrent() -> Bool {
+            let now = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
+            guard now == pid else { return false }
+            // 拿不到具体控件时只比 App —— 比不了不代表要拦，
+            // 那样会在很多不支持辅助功能查询的 App 里把听写整个废掉
+            guard let element, let current = focusedElement() else { return true }
+            return CFEqual(element, current)
+        }
+    }
+
+    static func focusSnapshot() -> FocusSnapshot {
+        FocusSnapshot(
+            pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1,
+            element: focusedElement()
+        )
+    }
+
+    /// 读回光标**前面**的 count 个字符。
+    ///
+    /// 用来在退格之前确认"要删的这一段确实是我们自己写的"。读不到就返回 nil，
+    /// 调用方要按"没法确认"处理，而不是当成确认通过。
+    static func textBeforeCaret(_ count: Int) -> String? {
+        guard count > 0, let caret = caretOffset(), caret >= count else { return nil }
+        return readRange(location: caret - count, length: count)
+    }
+
     private static func focusedElement() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
@@ -284,7 +319,7 @@ enum TextInjector {
         return (element as! AXUIElement)
     }
 
-    private static func copyToPasteboard(_ text: String) {
+    static func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
