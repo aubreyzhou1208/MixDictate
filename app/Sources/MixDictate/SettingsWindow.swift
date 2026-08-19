@@ -190,7 +190,8 @@ struct SettingsView: View {
                 slider("浮层不透明度", value: $model.config.overlayOpacity,
                        range: 0.2...1.0, format: "%.2f", width: 40,
                        help: "浮层固定在屏幕上一块地方，底下正好是你在看的东西。调低更不挡视线，调高更清楚。用鼠标拖它就能换位置，拖到哪儿记到哪儿。")
-                Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
+                Toggle("去掉「嗯」「呃」这类口语词（默认关，会删字）", isOn: $model.config.stripFillers)
+                    .help("默认关闭：这是唯一还会删字的加工。「嗯，可以」里那个「嗯」可能是回答而不是语气词，从文字上分不出来。多余的字你一眼能看见并删掉，被删掉的字你根本不知道它曾经存在过。")
                 Toggle("合并卡壳时的重复", isOn: $model.config.collapseRepeats)
                     .help("默认关。「超级超级好」是刻意强调不是卡壳，删错的代价比留着重复大得多。")
                 Toggle("中文标点转全角", isOn: $model.config.fullwidthPunctuation)

@@ -310,7 +310,7 @@ def split_long_clauses(text: str) -> str:
 def postprocess(
     text: str,
     *,
-    strip_filler_words: bool = True,
+    strip_filler_words: bool = False,
     collapse_repeated: bool = False,
     fullwidth_punctuation: bool = True,
     spoken_numbers: bool = True,

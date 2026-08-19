@@ -129,7 +129,12 @@ def test_context_is_space_separated(tmp_path):
 
 def test_full_chain():
     raw = "嗯,这个pipeline的latency有点高,我们要不要换个schema?"
-    assert postprocess(raw) == "这个 pipeline 的 latency 有点高，我们要不要换个 schema？"
+    # 默认不删字：「嗯」留着。空格、标点、大小写才是这条链路该管的事。
+    assert postprocess(raw) == "嗯，这个 pipeline 的 latency 有点高，我们要不要换个 schema？"
+    assert (
+        postprocess(raw, strip_filler_words=True)
+        == "这个 pipeline 的 latency 有点高，我们要不要换个 schema？"
+    )
 
 
 def test_empty_input():
@@ -207,7 +212,10 @@ def test_repeats_are_kept_by_default():
 
 def test_repeat_collapse_when_explicitly_enabled():
     raw = "嗯,我觉得我觉得这个 schema 要改"
-    assert postprocess(raw, collapse_repeated=True) == "我觉得这个 schema 要改"
+    assert (
+        postprocess(raw, collapse_repeated=True, strip_filler_words=True)
+        == "我觉得这个 schema 要改"
+    )
 
 
 def test_repeated_reduplication_collapses_to_the_word():
@@ -320,3 +328,36 @@ def test_splitting_can_be_turned_off():
     text = "那个热词自动学习可以开始了然后逗号识别有点怪"
     assert "，" not in postprocess(text, split_clauses=False)
     assert "，" in postprocess(text, split_clauses=True)
+
+
+# ------------------------------------------------- 默认设置下不许删字
+
+def test_default_postprocess_never_deletes_characters():
+    """默认配置下，后处理**只能改标点，不能删字**。
+
+    这是这条链路的底线。两种错误的代价差着数量级：多余的字用户一眼能看见
+    并删掉，而被删掉的字他根本不知道它曾经存在过 —— 连"要去检查"都想不到。
+
+    数字和符号转换是**有意**改写字符的（三点一四 → 3.14），所以这里关掉它们，
+    单独检验"有没有人在偷偷删东西"。
+    """
+    punctuation = "，。！？；：、,.!?;: \n"
+    cases = [
+        "呃，这个东西它能跑通吗",
+        "嗯，可以",
+        "超级超级好",
+        "我觉得我觉得这个方案不错",
+        "那个热词自动学习可以开始了然后逗号识别有点怪",
+        "这个 pipeline 的 latency 有点高",
+    ]
+    for text in cases:
+        out = postprocess(text, spoken_numbers=False, spoken_symbols=False)
+        before = [c for c in text if c not in punctuation]
+        after = [c for c in out if c not in punctuation]
+        assert before == after, f"{text!r} → {out!r} 少了字"
+
+
+def test_filler_stripping_is_off_by_default():
+    # 开着的话「嗯，可以」会变成「可以」—— 而那个「嗯」可能是回答
+    assert postprocess("嗯，可以") == "嗯，可以"
+    assert postprocess("嗯，可以", strip_filler_words=True) == "可以"

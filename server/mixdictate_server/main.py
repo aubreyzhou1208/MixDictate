@@ -214,7 +214,7 @@ async def warmup() -> dict:
 @app.post("/transcribe")
 async def transcribe(
     audio: UploadFile = File(...),
-    strip_fillers: bool = Form(True),
+    strip_fillers: bool = Form(False),
     collapse_repeats: bool = Form(False),
     fullwidth_punct: bool = Form(True),
     spoken_numbers: bool = Form(True),

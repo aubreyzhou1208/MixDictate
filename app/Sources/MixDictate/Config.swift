@@ -7,8 +7,15 @@ struct Config {
     var pushToTalkKeyCode: UInt16 = 61
     var serverURL: String = "http://127.0.0.1:8765"
 
-    /// 去掉"嗯""呃"这类口语填充词
-    var stripFillers: Bool = true
+    /// 去掉「嗯」「呃」这类口语填充词。**默认关闭。**
+    ///
+    /// 它是这条链路上最后一个会删字的功能，所以适用同一条规矩：
+    /// **多余的内容用户一眼能看见并删掉，删掉的内容他根本不知道曾经存在过。**
+    /// 两种错误的代价差着数量级。
+    ///
+    /// 而且「呃」「嗯」经常是真的在说 —— 「嗯，可以」里那个「嗯」是回答，
+    /// 不是语气助词。从文字上分不出来。
+    var stripFillers: Bool = false
 
     /// 中文标点转全角。写代码时可能更想要半角，所以留成开关。
     var fullwidthPunctuation: Bool = true
