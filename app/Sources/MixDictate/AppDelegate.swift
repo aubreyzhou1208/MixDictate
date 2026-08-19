@@ -787,6 +787,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 这份结果就不该再落进输入框。
         let session = sessionID
 
+        // **把已定稿的文字拷成局部变量。**
+        //
+        // committedText 是实例变量，而 beginRecording 会把它清空。
+        // 下面那个 Task 要 await 一秒多，这期间用户完全可能按下说话键开始说
+        // 下一段 —— 等结果回来再去读 committedText，读到的是新一段的空字符串，
+        // 拼出来只剩最后那一小段，**前面全没了**。
+        //
+        // "转写中不许按键"的时候撞不上这个竞态，允许接着说之后就每次都撞。
+        let committed = committedText
+
         if useFullPass {
             Task { @MainActor in
                 do {
@@ -807,7 +817,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 长录音：拼接已定稿的段落，只转最后那一段
         if audio.tail.isEmpty {
-            deliver(committedText, session: session)
+            deliver(committed, session: session)
             return
         }
 
@@ -820,7 +830,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let tail = try await client.transcribe(wav: audio.tail)
                 guard !cancelledSessions.contains(session) else { return }
-                let text = committedText + tail
+                let text = committed + tail
                 guard !text.isEmpty else {
                     reportEmptyResult(session: session)
                     return
