@@ -217,6 +217,18 @@ struct SettingsView: View {
                 .help("先试粘贴。个别 App 会拦截粘贴，那种情况改成逐字输入。")
             }
 
+            section("学习", "从你的修改里学热词（默认关）") {
+                Toggle("学习我对听写结果的修改", isOn: $model.config.learnCorrections)
+                    .help("""
+                        听写完几秒后回头看一眼：我们写进去的那段，你改了什么。
+                        同一个改动出现 3 次就写进热词表，以后自动改对。
+
+                        这是唯一会碰输入框的功能，所以口子开得很小：只按范围读我们自己写的那一段，控件不支持按范围读就放弃这次学习，绝不退回去读全文。学到的只存本机，不联网。
+
+                        默认关闭。不想让它碰输入框就一直关着 —— 菜单里的「从听写记录里找热词…」不需要这个开关，它只读转写记录。
+                        """)
+            }
+
             section("识别模型", "换模型会重启转写服务") {
                 Picker("模型", selection: $model.config.model) {
                     ForEach(ASRModel.allCases, id: \.rawValue) { option in

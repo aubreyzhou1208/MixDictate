@@ -71,6 +71,19 @@ struct Config {
     /// 多余的标点你一眼就能看见并改掉。
     var mergePausePeriods: Bool = true
 
+    /// 学习你对刚插入的文字做的修改。**默认关闭。**
+    ///
+    /// 转写记录里挖词只能看到"这个词你说得多"，看不到"这个词它一直听错"。
+    /// 而真正该进热词表的恰恰是后者 —— 你每次都要手动改的那个词。
+    /// 你改了什么，是唯一能区分这两件事的信号。
+    ///
+    /// 代价是它要回头看一眼输入框。所以口子开得尽量小：**只按范围读
+    /// 我们自己写进去的那一段**（kAXStringForRange），控件不支持按范围读
+    /// 就放弃这次学习，绝不退回去读全文。学到的只存本机，不联网。
+    ///
+    /// 同一个纠正攒够 3 次才写进词表 —— 一次是手滑，两次可能是巧合。
+    var learnCorrections: Bool = false
+
     /// 长句里的接续词前面补逗号。
     ///
     /// 跟 mergePausePeriods 正好是一对：那个管"停顿处多出来的句号"，
@@ -190,6 +203,8 @@ extension Config: Codable {
             ?? fallback.mergePausePeriods
         splitClauses = try c.decodeIfPresent(Bool.self, forKey: .splitClauses)
             ?? fallback.splitClauses
+        learnCorrections = try c.decodeIfPresent(Bool.self, forKey: .learnCorrections)
+            ?? fallback.learnCorrections
         minimumDurationSeconds = try c.decodeIfPresent(Double.self, forKey: .minimumDurationSeconds)
             ?? fallback.minimumDurationSeconds
         showLiveOverlay = try c.decodeIfPresent(Bool.self, forKey: .showLiveOverlay)

@@ -14,7 +14,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mixdictate_server.hotwords import HotwordTable, append_terms, mine_candidates
+from mixdictate_server.hotwords import (
+    HotwordTable,
+    append_alias,
+    append_terms,
+    mine_candidates,
+    observe_correction,
+    pending_corrections,
+)
 
 LOG = """2026-08-19 10:00:00  [1.0s]
   原始: 这个 pipeline 的 latency 有点高
@@ -96,3 +103,51 @@ def test_append_keeps_the_original_casing():
     log = "\n".join(["  原始: 用的是 GitHub Actions"] * 2)
     terms = [term for term, _ in mine_candidates(log)]
     assert "GitHub" in terms
+
+
+# ---------------------------------------------------------------- 纠正学习
+
+def test_same_correction_three_times_gets_learned(tmp_path):
+    store = tmp_path / "corrections.json"
+    assert observe_correction(store, "开普内特斯", "Kubernetes") == (1, False)
+    assert observe_correction(store, "开普内特斯", "Kubernetes") == (2, False)
+    # 一次是手滑，两次可能是巧合，三次就是"它每次都听错这个词"
+    assert observe_correction(store, "开普内特斯", "Kubernetes") == (3, True)
+
+
+def test_different_corrections_are_counted_separately(tmp_path):
+    store = tmp_path / "corrections.json"
+    observe_correction(store, "甲", "乙")
+    observe_correction(store, "丙", "丁")
+    assert observe_correction(store, "甲", "乙") == (2, False)
+
+
+def test_a_no_op_correction_is_ignored(tmp_path):
+    store = tmp_path / "corrections.json"
+    assert observe_correction(store, "一样", "一样") == (0, False)
+    assert observe_correction(store, "", "东西") == (0, False)
+
+
+def test_a_corrupt_store_does_not_break_learning(tmp_path):
+    # 这只是个计数器，存坏了不值得让听写跟着出错
+    store = tmp_path / "corrections.json"
+    store.write_text("{ 这不是 JSON", encoding="utf-8")
+    assert observe_correction(store, "甲", "乙") == (1, False)
+
+
+def test_learned_alias_is_written_once(tmp_path):
+    path = tmp_path / "hotwords.txt"
+    assert append_alias(path, "开普内特斯", "Kubernetes") is True
+    assert append_alias(path, "开普内特斯", "Kubernetes") is False
+    assert HotwordTable.load(path).aliases["开普内特斯"] == "Kubernetes"
+
+
+def test_pending_lists_counts_below_the_threshold(tmp_path):
+    store = tmp_path / "corrections.json"
+    observe_correction(store, "甲", "乙")
+    observe_correction(store, "甲", "乙")
+    observe_correction(store, "丙", "丁")
+
+    rows = pending_corrections(store)
+    assert rows[0] == ("甲", "乙", 2)   # 次数多的排前面
+    assert ("丙", "丁", 1) in rows

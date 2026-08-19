@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitor: HotKeyMonitor?
     private let hotwordCandidatesWindow = HotwordCandidatesWindowController()
+    private lazy var corrections = CorrectionWatcher(config: config)
 
     /// 录音/转写期间盯着 Esc 的两个监听。全局的管别的 App 在前台的情况，
     /// 本地的管我们自己的窗口在前台的情况 —— 少一个就会有一半场景按了没用。
@@ -66,6 +67,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installHotKeyMonitor()
         startConfigWatch()
         writeStatusFile()
+
+        // "它自己改了我的词表"这件事必须让人看见。学到的时候浮层说一声，
+        // 不然词表会在用户不知情的情况下长出新规则。
+        corrections.onLearned = { [weak self] wrong, right in
+            guard let self else { return }
+            overlay.show(style: .compact, status: "学会了")
+            overlay.update("以后「\(wrong)」自动改成「\(right)」", isFinal: true)
+            overlay.hide(after: 3)
+        }
     }
 
     // MARK: - 给终端看的状态文件
@@ -489,6 +499,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder.maxPauseSeconds = max(0, config.maxPauseSeconds)
             try recorder.start(cancelEcho: config.echoCancellation)
             sessionID += 1
+            // 上一轮的观察还没到时间就作废：新一轮马上要往同一个输入框里写，
+            // 再去比对上一段就会把两轮的内容混在一起
+            corrections.cancel()
             startEscapeWatch()
             silentTicks = 0
             committedText = ""
@@ -844,6 +857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.setStatus("完成")
             overlay.hide(after: 0.8)
             state = .idle
+            corrections.noteInsertion(text)
             return
         }
 
@@ -854,10 +868,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .inserted(let method):
             NSLog("MixDictate: 已通过 %@ 插入", method.rawValue)
             overlay.hide(after: 1.2)
+            corrections.noteInsertion(text)
         case .insertedViaAccessibility:
             // 安全输入模式挡住了合成按键，但辅助功能接口写进去了
             NSLog("MixDictate: 安全输入模式，已改走辅助功能接口")
             overlay.hide(after: 1.2)
+            corrections.noteInsertion(text)
         case .needsAccessibility:
             overlay.hide()
             reportAccessibilityMissing()

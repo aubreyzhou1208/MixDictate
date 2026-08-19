@@ -190,6 +190,62 @@ enum TextInjector {
 
     // MARK: - 杂项
 
+    // MARK: - 读回我们自己写进去的那一段
+
+    /// 当前输入框里，光标之前的插入点位置。插入完立刻取一次，
+    /// 之后靠它算出"我们写的那一段"在哪儿。
+    static func caretOffset() -> Int? {
+        guard let element = focusedElement() else { return nil }
+
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXSelectedTextRangeAttribute as CFString, &value
+        ) == .success, let raw = value, CFGetTypeID(raw) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var range = CFRange()
+        guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+        return range.location
+    }
+
+    /// 只读指定范围内的文字。
+    ///
+    /// **刻意不去读整个输入框。** 用 kAXStringForRange 这个带参数的属性，
+    /// 向系统要的就只有这一段 —— 承诺"只看我们自己写的那一段"必须落在
+    /// 接口这一层，而不是"读回来之后我们自觉不看别的"。
+    ///
+    /// 有些控件不支持这个属性。那就放弃这次学习，**不退回去读全文**。
+    static func readRange(location: Int, length: Int) -> String? {
+        guard location >= 0, length > 0, let element = focusedElement() else {
+            return nil
+        }
+
+        var range = CFRange(location: location, length: length)
+        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
+
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &value
+        ) == .success else { return nil }
+
+        return value as? String
+    }
+
+    private static func focusedElement() -> AXUIElement? {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            system, kAXFocusedUIElementAttribute as CFString, &focused
+        ) == .success, let element = focused,
+              CFGetTypeID(element) == AXUIElementGetTypeID()
+        else { return nil }
+        return (element as! AXUIElement)
+    }
+
     private static func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

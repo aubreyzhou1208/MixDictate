@@ -20,7 +20,14 @@ from fastapi.responses import JSONResponse
 from . import paths
 from .asr import DEFAULT_MODEL, Transcriber
 from .audio import inspect_wav
-from .hotwords import HotwordTable, append_terms, mine_candidates
+from .hotwords import (
+    HotwordTable,
+    append_alias,
+    append_terms,
+    mine_candidates,
+    observe_correction,
+    pending_corrections,
+)
 from .postprocess import postprocess
 
 logging.basicConfig(
@@ -155,6 +162,42 @@ def hotword_add(terms: str = Form(...)) -> dict:
     added = append_terms(HOTWORDS_PATH, wanted)
     log.info("热词表新增 %d 条", added)
     return {"added": added, "hotwords_path": str(HOTWORDS_PATH.resolve())}
+
+
+@app.post("/hotwords/observe")
+def hotword_observe(wrong: str = Form(...), right: str = Form(...)) -> dict:
+    """记一次「用户把我们写的 wrong 改成了 right」。
+
+    攒够门槛次数就自动写成一条别名规则。为什么这个可以自动、而候选词
+    必须人工确认：**用户改过的字是硬证据**，说明这个词它确实一直听错；
+    而候选词只是"你说得多"，说得多不代表听错了。
+    两者的证据强度不一样，所以待遇也不一样。
+    """
+    store = paths.support_dir() / "corrections.json"
+    count, reached = observe_correction(store, wrong, right)
+    if count == 0:
+        return {"count": 0, "learned": False}
+
+    learned = False
+    if reached:
+        learned = append_alias(HOTWORDS_PATH, wrong.strip(), right.strip())
+        if learned:
+            log.info("自动学到纠正：%s => %s（改过 %d 次）", wrong, right, count)
+
+    return {"count": count, "learned": learned}
+
+
+@app.get("/hotwords/pending")
+def hotword_pending() -> dict:
+    """还没到门槛的纠正。列出来让用户可以提前确认。"""
+    store = paths.support_dir() / "corrections.json"
+    rows = pending_corrections(store)
+    return {
+        "pending": [
+            {"wrong": wrong, "right": right, "count": count}
+            for wrong, right, count in rows
+        ]
+    }
 
 
 @app.post("/warmup")

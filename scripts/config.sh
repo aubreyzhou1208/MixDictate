@@ -40,6 +40,7 @@ usage() {
   collapseRepeats     true / false   合并卡壳重复（默认关，容易误删）
   mergePausePeriods   true / false   停顿处误加的句号降级成逗号（默认开，只改标点不删字）
   splitClauses        true / false   长句里给接续词补逗号（默认开，只加标点不删字）
+  learnCorrections    true / false   学习你对听写结果的修改（默认关，唯一会碰输入框的功能）
 
 觉得哪一项在乱改你的话，直接关掉它：
   ./scripts/config.sh set spokenNumbers false

@@ -196,3 +196,91 @@ def append_terms(path: str | Path, terms: list[str]) -> int:
         for term in fresh:
             handle.write(term + "\n")
     return len(fresh)
+
+
+# ---------------------------------------------------------------- 纠正学习
+
+# 攒够这么多次同一个纠正才写进词表。
+#
+# 一次是手滑，两次可能是巧合，三次就是"它每次都听错这个词"。
+# 门槛太低会把用户的临时改动学成规则，太高又永远学不到。
+LEARN_THRESHOLD = 3
+
+
+def observe_correction(
+    store_path: str | Path,
+    wrong: str,
+    right: str,
+    *,
+    threshold: int = LEARN_THRESHOLD,
+) -> tuple[int, bool]:
+    """记一次"用户把 wrong 改成了 right"，返回（累计次数，这次是否入表）。
+
+    计数存在本机一个 JSON 里，不联网、不上报。
+    """
+    import json
+
+    wrong, right = wrong.strip(), right.strip()
+    if not wrong or not right or wrong == right:
+        return (0, False)
+
+    p = Path(store_path)
+    data: dict[str, int] = {}
+    if p.exists():
+        try:
+            loaded = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = {k: int(v) for k, v in loaded.items() if isinstance(v, int)}
+        except (json.JSONDecodeError, OSError, ValueError):
+            # 存坏了就从头开始记。这只是个计数器，不值得为它中断听写。
+            data = {}
+
+    key = f"{wrong} => {right}"
+    count = data.get(key, 0) + 1
+    data[key] = count
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    return (count, count >= threshold)
+
+
+def append_alias(path: str | Path, wrong: str, right: str) -> bool:
+    """把学到的纠正写成一条别名规则。已经有了就不重复写。"""
+    p = Path(path)
+    table = HotwordTable.load(p)
+    if table.aliases.get(wrong) == right:
+        return False
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n# 你改过 {LEARN_THRESHOLD} 次，自动学的\n")
+        handle.write(f"{wrong} => {right}\n")
+    return True
+
+
+def pending_corrections(store_path: str | Path) -> list[tuple[str, str, int]]:
+    """还没到门槛的纠正。列出来让用户可以提前手动确认。"""
+    import json
+
+    p = Path(store_path)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    out = []
+    for key, count in data.items():
+        if not isinstance(count, int) or "=>" not in key:
+            continue
+        wrong, _, right = key.partition("=>")
+        out.append((wrong.strip(), right.strip(), count))
+    out.sort(key=lambda row: (-row[2], row[0]))
+    return out
