@@ -71,6 +71,15 @@ struct Config {
     /// 多余的标点你一眼就能看见并改掉。
     var mergePausePeriods: Bool = true
 
+    /// 长句里的接续词前面补逗号。
+    ///
+    /// 跟 mergePausePeriods 正好是一对：那个管"停顿处多出来的句号"，
+    /// 这个管"说得顺的时候一个逗号都没有"。两者同源 —— 模型下标点主要
+    /// 靠停顿，而说得顺时分句处根本不停，没有停顿就没有逗号。
+    ///
+    /// 只加逗号，不动任何字。
+    var splitClauses: Bool = true
+
     /// 口语数字还原成阿拉伯数字：「三点一四」→「3.14」
     var spokenNumbers: Bool = true
 
@@ -179,6 +188,8 @@ extension Config: Codable {
             ?? fallback.spokenSymbols
         mergePausePeriods = try c.decodeIfPresent(Bool.self, forKey: .mergePausePeriods)
             ?? fallback.mergePausePeriods
+        splitClauses = try c.decodeIfPresent(Bool.self, forKey: .splitClauses)
+            ?? fallback.splitClauses
         minimumDurationSeconds = try c.decodeIfPresent(Double.self, forKey: .minimumDurationSeconds)
             ?? fallback.minimumDurationSeconds
         showLiveOverlay = try c.decodeIfPresent(Bool.self, forKey: .showLiveOverlay)

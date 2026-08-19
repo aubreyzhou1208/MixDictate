@@ -5,6 +5,7 @@ import AVFoundation
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitor: HotKeyMonitor?
+    private let hotwordCandidatesWindow = HotwordCandidatesWindowController()
 
     /// 录音/转写期间盯着 Esc 的两个监听。全局的管别的 App 在前台的情况，
     /// 本地的管我们自己的窗口在前台的情况 —— 少一个就会有一半场景按了没用。
@@ -336,6 +337,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    /// 热词候选。**没有自动入表的路径** —— 词表是拿去偏置解码器的，
+    /// 一个听错的词进了表会让模型把这个错误听得更稳定，那比不加还糟。
+    /// 所以只提供候选，勾选和「加入」必须是人做的动作。
+    @objc private func openHotwordCandidates() {
+        hotwordCandidatesWindow.show(config: config)
     }
 
     // MARK: - 人声门限校准
@@ -1122,6 +1130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "编辑热词表…", action: #selector(openHotwords), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "从听写记录里找热词…", action: #selector(openHotwordCandidates), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "检查服务状态", action: #selector(checkServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "重启转写服务", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "查看服务日志…", action: #selector(openServerLog), keyEquivalent: ""))

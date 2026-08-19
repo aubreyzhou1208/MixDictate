@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from . import paths
 from .asr import DEFAULT_MODEL, Transcriber
 from .audio import inspect_wav
-from .hotwords import HotwordTable
+from .hotwords import HotwordTable, append_terms, mine_candidates
 from .postprocess import postprocess
 
 logging.basicConfig(
@@ -116,6 +116,47 @@ def health() -> dict:
     }
 
 
+@app.get("/hotwords/candidates")
+def hotword_candidates() -> dict:
+    """从本机的转写记录里挑出可能值得加进热词表的词。
+
+    **只读本机那个日志文件**，不碰任何别的 App、不读输入框、不联网。
+    挑出来的东西也只是候选 —— 加不加由用户在界面上一条条勾。
+
+    这是刻意选的口子。最初想的是读当前输入框的内容来学，那个做法能拿到
+    更准的词，但它要去读用户正在写的东西 —— 邮件、密码框旁边的字段、
+    别人的聊天记录。这里换成只看我们自己已经写下的转写日志：用户说过
+    什么，本来就是他自己对着这个 App 说的。
+    """
+    log_path = paths.log_dir() / "transcripts.log"
+    if not log_path.exists():
+        return {"candidates": [], "note": "还没有转写记录"}
+
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    table = current_hotwords()
+    found = mine_candidates(text, existing=set(table.terms))
+    return {
+        "candidates": [{"term": term, "count": count} for term, count in found],
+        "hotwords_path": str(HOTWORDS_PATH.resolve()),
+    }
+
+
+@app.post("/hotwords/add")
+def hotword_add(terms: str = Form(...)) -> dict:
+    """把用户勾中的词追加进词表。换行分隔。
+
+    只有走过界面确认的词才会到这里 —— 服务端不自己往词表里写任何东西。
+    """
+    wanted = [line.strip() for line in terms.splitlines() if line.strip()]
+    added = append_terms(HOTWORDS_PATH, wanted)
+    log.info("热词表新增 %d 条", added)
+    return {"added": added, "hotwords_path": str(HOTWORDS_PATH.resolve())}
+
+
 @app.post("/warmup")
 async def warmup() -> dict:
     """录音一开始就调这个，把 Metal 计算核的编译开销提前付掉。
@@ -136,6 +177,7 @@ async def transcribe(
     spoken_numbers: bool = Form(True),
     spoken_symbols: bool = Form(True),
     merge_pause_periods: bool = Form(True),
+    split_clauses: bool = Form(True),
     partial: bool = Form(False),
 ) -> JSONResponse:
     started = time.monotonic()
@@ -201,6 +243,7 @@ async def transcribe(
         spoken_numbers=spoken_numbers,
         spoken_symbols=spoken_symbols,
         merge_pause_periods=merge_pause_periods,
+        split_clauses=split_clauses,
     )
 
     elapsed = time.monotonic() - started

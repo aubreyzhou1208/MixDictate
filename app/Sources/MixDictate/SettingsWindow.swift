@@ -198,6 +198,8 @@ struct SettingsView: View {
                     .help("艾特 gmail 点 com → @gmail.com")
                 Toggle("停顿处误加的句号降级成逗号", isOn: $model.config.mergePausePeriods)
                     .help("句号后面跟着「然后」「但是」这类接续词，说明这句还没说完。只改标点，不删字。")
+                Toggle("长句里给接续词补逗号", isOn: $model.config.splitClauses)
+                    .help("说得顺的时候分句处根本不停，没有停顿模型就不给逗号，一句话能拖很长。接续词就是分句的位置，这一点不用听也知道。只加逗号，不动字。")
             }
 
             section("输入方式", "怎么把文字送进输入框") {

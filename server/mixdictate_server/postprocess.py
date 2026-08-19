@@ -244,6 +244,67 @@ def merge_pause_sentences(text: str) -> str:
     return _PAUSE_PERIOD_RE.sub(replace, text)
 
 
+# ------------------------------------------------- 长句缺逗号
+
+# 跟上面那条正好相反的毛病：一句话说了很长却一个逗号都没有。
+#
+# 成因是同一件事的另一面。模型下标点主要靠停顿长短，而说得顺的时候
+# 分句处根本不停 —— 没有停顿，就没有逗号。我们又主动把长静音压短了
+# （maxPauseSeconds），等于把这条线索削得更薄。
+#
+# 同样从文字侧补：接续词就是分句的位置，这一点不用听也知道。
+# **只加逗号，不动任何字。**
+
+# 这些词起头，几乎一定是新的一个分句
+_CLAUSE_STARTERS = (
+    "然后", "但是", "不过", "可是", "而且", "并且", "所以", "因为", "由于",
+    "还有", "另外", "或者", "于是", "接着", "后来", "然而", "要不", "不然",
+    "否则", "如果", "虽然", "尽管", "至于", "以及", "那么", "结果", "反正",
+)
+
+# 前面攒够这么多字才断。太短的话「然后」出现在句首也会被塞个逗号，
+# 反而更碎。
+_MIN_CLAUSE_CHARS = 8
+
+def split_long_clauses(text: str) -> str:
+    """长句里的接续词前面补逗号。"""
+    out: list[str] = []
+    since_punct = 0
+
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+
+        if char in "，。！？；：,.!?;:\n":
+            since_punct = 0
+            out.append(char)
+            index += 1
+            continue
+
+        matched = ""
+        if since_punct >= _MIN_CLAUSE_CHARS:
+            for word in _CLAUSE_STARTERS:
+                if text.startswith(word, index):
+                    matched = word
+                    break
+
+        if matched:
+            # 前面已经是标点或空白就不重复加
+            if out and out[-1] not in "，。！？；：,.!?;: \n":
+                out.append("，")
+            out.append(matched)
+            index += len(matched)
+            since_punct = len(matched)
+            continue
+
+        out.append(char)
+        since_punct += 1
+        index += 1
+
+    return "".join(out)
+
+
 # ---------------------------------------------------------------- 组装
 
 def postprocess(
@@ -255,6 +316,7 @@ def postprocess(
     spoken_numbers: bool = True,
     spoken_symbols: bool = True,
     merge_pause_periods: bool = True,
+    split_clauses: bool = True,
 ) -> str:
     """完整后处理链。热词纠正在 hotwords.py 里，由调用方插在中间。
 
@@ -283,4 +345,8 @@ def postprocess(
     # 这里要看的正是最终那个字符
     if merge_pause_periods:
         text = merge_pause_sentences(text)
+    # 放在降级之后：降级会把句号变成逗号，那本身就是一个分句边界，
+    # 先做完再来判断"这一段有多长没断过"才准
+    if split_clauses:
+        text = split_long_clauses(text)
     return text.strip()

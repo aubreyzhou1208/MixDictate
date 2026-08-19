@@ -8,6 +8,7 @@ from mixdictate_server.postprocess import (
     collapse_repeats,
     fix_spacing,
     merge_pause_sentences,
+    split_long_clauses,
     postprocess,
     strip_fillers,
     to_fullwidth_punct,
@@ -276,3 +277,46 @@ def test_merging_can_be_turned_off():
     text = "我觉得这个方案。然后我们再看别的"
     assert "。" in postprocess(text, merge_pause_periods=False)
     assert "。" not in postprocess(text, merge_pause_periods=True)
+
+
+# ---------------------------------------------------------------- 长句缺逗号
+
+def test_connective_in_a_long_run_gets_a_comma():
+    # 说得顺的时候分句处根本不停，没有停顿就没有逗号。
+    # 但「然后」出现在这里，不用听也知道是新的一个分句。
+    assert (
+        split_long_clauses("那个热词自动学习可以开始了然后逗号识别有点怪")
+        == "那个热词自动学习可以开始了，然后逗号识别有点怪"
+    )
+
+
+def test_connective_at_the_very_start_is_left_alone():
+    # 句首的「然后」前面没有东西可断
+    assert split_long_clauses("然后我们再看别的") == "然后我们再看别的"
+
+
+def test_short_run_is_left_alone():
+    # 前面才几个字就断，只会更碎
+    assert split_long_clauses("短句然后行") == "短句然后行"
+
+
+def test_existing_punctuation_is_not_doubled():
+    for text in ("这个方案挺好的，但是有点慢", "我先去吃饭。然后我们再说"):
+        assert split_long_clauses(text) == text
+
+
+def test_splitting_never_changes_the_characters():
+    # 只加逗号。这一条和「只降级标点绝不删字」是同一个原则的两面。
+    for text in (
+        "那个热词自动学习可以开始了然后逗号识别有点怪也可以继续",
+        "这个功能做完了所以我们可以看下一个但是要先测一遍",
+    ):
+        before = [c for c in text if c != "，"]
+        after = [c for c in split_long_clauses(text) if c != "，"]
+        assert before == after
+
+
+def test_splitting_can_be_turned_off():
+    text = "那个热词自动学习可以开始了然后逗号识别有点怪"
+    assert "，" not in postprocess(text, split_clauses=False)
+    assert "，" in postprocess(text, split_clauses=True)

@@ -119,6 +119,10 @@ struct TranscriptionClient {
         line("\(raw ? false : config.mergePausePeriods)\r\n")
 
         line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"split_clauses\"\r\n\r\n")
+        line("\(raw ? false : config.splitClauses)\r\n")
+
+        line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"partial\"\r\n\r\n")
         line("\(partial)\r\n")
 
