@@ -85,6 +85,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 留到按下说话键时才做，那几十毫秒的话就录不到了。
         recorder.prewarm()
 
+        applyOverlayAppearance()
+        // 拖到哪儿就记到哪儿。听写时按着说话键没法挪，所以只要挪过一次
+        // 就得一直记着 —— 每次都回到老地方等于没法挪。
+        overlay.onMoved = { [weak self] origin in
+            guard let self else { return }
+            config.overlayX = Double(origin.x)
+            config.overlayY = Double(origin.y)
+            try? config.save()
+            configStamp = Config.modificationDate()
+        }
+
         // "它自己改了我的词表"这件事必须让人看见。学到的时候浮层说一声，
         // 不然词表会在用户不知情的情况下长出新规则。
         corrections.onLearned = { [weak self] wrong, right in
@@ -177,10 +188,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             installHotKeyMonitor()
         }
         buildMenu()
+        applyOverlayAppearance()
         NSLog("MixDictate: 配置已重新加载")
 
         if config.model != previousModel {
             restartServer()
+        }
+    }
+
+    private func applyOverlayAppearance() {
+        overlay.opacity = max(0.2, min(1, config.overlayOpacity))
+        if let x = config.overlayX, let y = config.overlayY {
+            overlay.restorePosition(NSPoint(x: x, y: y))
+        } else {
+            overlay.restorePosition(nil)
         }
     }
 

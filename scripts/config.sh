@@ -28,6 +28,7 @@ usage() {
   rawOutput           true / false   只要模型原文，不做任何加工（排查"输出很怪"用）
   liveInsertion       true / false   边说边写进输入框（不用等松手，也没有粘贴那一步）
   showLiveOverlay     true / false   录音时显示浮层
+  overlayOpacity      0.2…1          浮层不透明度（默认 0.75；位置直接用鼠标拖，会自动记住）
   insertionMethod     paste / typing 输入方式
   pushToTalkKeyCode   61=右Option 58=左Option 54=右Command 62=右Control
   model               Qwen/Qwen3-ASR-0.6B 或 Qwen/Qwen3-ASR-1.7B

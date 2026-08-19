@@ -109,6 +109,17 @@ struct Config {
     /// 录音时在屏幕上显示实时转写结果
     var showLiveOverlay: Bool = true
 
+    /// 浮层的不透明度（0…1）。默认半透 —— 它固定在屏幕上一块地方，
+    /// 底下正好是你在看的东西。它是个提示，不该是块挡板。
+    var overlayOpacity: Double = 0.75
+
+    /// 浮层被拖到过的位置（屏幕坐标）。nil = 用默认位置（底部靠上一点）。
+    ///
+    /// 按住说话键时没法用同一只手挪窗口，所以位置必须记住 ——
+    /// 挪一次要管以后所有次。
+    var overlayX: Double?
+    var overlayY: Double?
+
     /// 松手后用完整音频重转一遍的时长上限（秒）。
     ///
     /// 分段是为实时预览提速的，代价是每段只看得到自己那两三秒 ——
@@ -213,6 +224,10 @@ extension Config: Codable {
             ?? fallback.minimumDurationSeconds
         showLiveOverlay = try c.decodeIfPresent(Bool.self, forKey: .showLiveOverlay)
             ?? fallback.showLiveOverlay
+        overlayOpacity = try c.decodeIfPresent(Double.self, forKey: .overlayOpacity)
+            ?? fallback.overlayOpacity
+        overlayX = try c.decodeIfPresent(Double.self, forKey: .overlayX)
+        overlayY = try c.decodeIfPresent(Double.self, forKey: .overlayY)
         partialIntervalSeconds = try c.decodeIfPresent(Double.self, forKey: .partialIntervalSeconds)
             ?? fallback.partialIntervalSeconds
         fullPassMaxSeconds = try c.decodeIfPresent(Double.self, forKey: .fullPassMaxSeconds)

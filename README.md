@@ -245,6 +245,19 @@ git clone https://github.com/aubreyzhou1208/MixDictate.git ~/MixDictate && cd ~/
 - **听写过程中别自己动光标或改字** —— 那之后程序对"已写入内容"的记忆
   就错了，退删会误伤你的内容。单次退删有 200 字上限兜底，但最好别试
 
+## 浮层挡视线
+
+它默认半透（0.75），而且**用鼠标直接拖就能换位置，拖到哪儿记到哪儿** ——
+按住说话键的时候没法用同一只手挪窗口，所以位置必须记住，挪一次管以后所有次。
+
+```bash
+./scripts/config.sh set overlayOpacity 0.5   # 更透
+./scripts/config.sh set showLiveOverlay false  # 干脆不显示
+```
+
+拖到屏幕外了也不用担心：下次显示时会被夹回可见区域（外接屏拔掉之后最容易
+遇到这个）。
+
 ## 菜单栏图标
 
 MixDictate 不进 Dock、不出现在 Cmd+Tab，只在系统状态栏（时钟、电量那一排）挂一个图标。

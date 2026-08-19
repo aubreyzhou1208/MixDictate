@@ -187,6 +187,9 @@ struct SettingsView: View {
                 Divider()
 
                 Toggle("录音时显示实时浮层", isOn: $model.config.showLiveOverlay)
+                slider("浮层不透明度", value: $model.config.overlayOpacity,
+                       range: 0.2...1.0, format: "%.2f", width: 40,
+                       help: "浮层固定在屏幕上一块地方，底下正好是你在看的东西。调低更不挡视线，调高更清楚。用鼠标拖它就能换位置，拖到哪儿记到哪儿。")
                 Toggle("去掉「嗯」「呃」这类口语词", isOn: $model.config.stripFillers)
                 Toggle("合并卡壳时的重复", isOn: $model.config.collapseRepeats)
                     .help("默认关。「超级超级好」是刻意强调不是卡壳，删错的代价比留着重复大得多。")

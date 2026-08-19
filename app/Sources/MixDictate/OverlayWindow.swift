@@ -27,9 +27,30 @@ final class OverlayWindow {
     private var pulseBright = true
     private var currentStatus = ""
 
+    /// 用户把浮层拖到新位置时回调，让外面存进配置
+    var onMoved: ((NSPoint) -> Void)?
+
+    /// 从配置里恢复上次拖到的位置
+    func restorePosition(_ origin: NSPoint?) {
+        customOrigin = origin
+    }
+
     private var width: CGFloat { style == .compact ? 230 : 560 }
     private let horizontalPadding: CGFloat = 20
     private let verticalPadding: CGFloat = 16
+
+    /// 不透明度。**默认半透** —— 浮层固定在屏幕上一块地方，
+    /// 底下正好是你在看的东西。它是个提示，不该是块挡板。
+    var opacity: Double = 0.75 {
+        didSet { panel?.alphaValue = opacity }
+    }
+
+    /// 用户把浮层拖到过哪儿（屏幕坐标的左下角）。nil = 用默认位置。
+    ///
+    /// 按住说话键的时候没法用同一只手挪窗口，所以位置必须记住 ——
+    /// 挪一次管以后所有次。
+    private var customOrigin: NSPoint?
+
 
     // MARK: - 显示
 
@@ -157,7 +178,11 @@ final class OverlayWindow {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.level = .statusBar
-        panel.ignoresMouseEvents = true
+        panel.alphaValue = opacity
+        // 要能拖走，就不能完全无视鼠标。它只在听写期间出现，
+        // 那期间也不会有人想点它下面的东西 —— 挪得动比点得穿重要。
+        panel.ignoresMouseEvents = false
+        panel.isMovableByWindowBackground = true
         // 切到别的桌面 / 全屏 App 时浮层要跟过去
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
@@ -180,6 +205,19 @@ final class OverlayWindow {
 
         effect.addSubview(label)
         panel.contentView = effect
+
+        // 拖完把位置记下来，下次直接用
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let panel = self.panel else { return }
+                self.customOrigin = panel.frame.origin
+                self.onMoved?(panel.frame.origin)
+            }
+        }
 
         self.panel = panel
         self.label = label
@@ -219,10 +257,16 @@ final class OverlayWindow {
         let visible = screen.visibleFrame
         // 抬得比 Dock 高一截。放太低会被 Dock 或者别的 App 的底部工具栏
         // 挡住，用户就会以为"根本没显示"。
-        let origin = NSPoint(
+        let fallback = NSPoint(
             x: visible.midX - width / 2,
             y: visible.minY + 160
         )
+
+        // 拖过就用拖到的位置。夹回屏幕内 —— 外接屏拔掉之后，
+        // 上次记住的坐标可能已经在屏幕外了，那样浮层就永远看不见了。
+        var origin = customOrigin ?? fallback
+        origin.x = min(max(origin.x, visible.minX), visible.maxX - width)
+        origin.y = min(max(origin.y, visible.minY), visible.maxY - panelHeight)
 
         panel.setFrame(
             NSRect(origin: origin, size: NSSize(width: width, height: panelHeight)),
