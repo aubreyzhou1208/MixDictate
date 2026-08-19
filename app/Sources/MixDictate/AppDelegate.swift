@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 最近一次听写录到的最大响度。写进状态文件给 verify.sh 看 ——
     /// "采集是不是全零"这件事骗过我好几轮，必须变成一个能从终端读到的数字。
     private var lastCapturePeak: Float = -1
+
+    /// 最近一次听写被人声门限写成静音的时长。门限吃字这件事以前完全
+    /// 看不见 —— 只表现成"句子里少了几个字"，必须变成一个能读到的数字。
+    private var lastGatedSeconds: Double = -1
     private let recorder = AudioRecorder()
     private var config = Config.load()
     private var server: ServerProcess!
@@ -108,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "echoCancellation": recorder.echoCancellationActive,
             "inputFormat": recorder.inputFormatDescription,
             "lastCapturePeak": lastCapturePeak,
+            "lastGatedSeconds": lastGatedSeconds,
             "state": String(describing: state),
             "lastError": lastError ?? "",
             "appPath": Bundle.main.bundleURL.path,
@@ -707,6 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopPartialUpdates()
         stopEscapeWatch()
         lastCapturePeak = recorder.loudestLevel
+        lastGatedSeconds = recorder.gatedSeconds
         writeStatusFile()
 
         guard let audio = recorder.stop(minimumDuration: config.minimumDurationSeconds) else {

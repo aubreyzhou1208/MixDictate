@@ -118,6 +118,21 @@ if [ -f "$STATUS" ]; then
         esac
     fi
 
+    # 门限挡掉的时长。挡掉一点是正常的（句间静音），挡掉很多就说明
+    # 门限设高了，而它的表现只是"句子里少了几个字"，光看结果看不出来。
+    gated="$(field lastGatedSeconds)"
+    case "$gated" in
+        ""|-*) : ;;
+        *)
+            if [ "$(python3 -c "print(1 if float('$gated') > 2.0 else 0)" 2>/dev/null)" = "1" ]; then
+                warn "最近一次听写有 ${gated} 秒被人声门限挡掉了 —— 说得轻的字可能丢了"
+                fix "./scripts/config.sh set voiceThreshold 0.01"
+            else
+                pass "门限挡掉 ${gated} 秒（正常范围）"
+            fi
+            ;;
+    esac
+
     # -1 = 这次启动后还没听写过，没有数据可查，不是失败
     peak="$(field lastCapturePeak)"
     case "$peak" in

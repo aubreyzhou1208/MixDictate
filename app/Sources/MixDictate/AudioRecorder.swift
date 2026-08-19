@@ -35,9 +35,17 @@ final class AudioRecorder {
     /// 每次刷新转 30 秒，松手后再转一遍 30 秒，开销随时长平方级恶化。
     private var committedOffset = 0
 
-    /// 最后一次检测到人声的位置。用来找停顿：这个位置到缓冲区末尾的距离
-    /// 就是当前的静音时长，够长就说明可以在这里切一刀。
+    /// 最后一次**越过人声门限**的位置。用来找停顿：这个位置到缓冲区末尾
+    /// 的距离就是当前的静音时长，够长就说明可以在这里切一刀。
     private var lastLoudByte = 0
+
+    /// 最后一次**听到任何声音**的位置（只要高过噪声底）。
+    ///
+    /// 必须跟 lastLoudByte 分开记。判断"这一段要不要送去转写"如果用
+    /// lastLoudByte，那么"你说话太轻没越过门限"和"这段真的没人说话"
+    /// 就变成了同一件事 —— 于是你小声说的那一整段会被直接跳过，
+    /// 连转写请求都不发，字就这么没了。
+    private var lastSoundByte = 0
 
     /// 人声门限（0…1）。低于它的声音一律写成静音，不进入转写。设成 0 关闭。
     ///
@@ -46,7 +54,12 @@ final class AudioRecorder {
     /// 的说话声，在模型眼里跟你说话没有任何区别。但两者有个很稳定的差别：
     /// 你的嘴离麦克风二三十厘米，视频的声音要绕一圈才回来，通常弱一个数量级。
     /// 按响度切一刀，就能把绝大部分漏音挡在外面。
-    var voiceThreshold: Float = 0.05
+    ///
+    /// **默认值必须定在"绝不吃字"那一侧。** 正常说话峰值大约 0.2–0.6，
+    /// 而轻声字、词尾、一个词的第二个音节常常只有 0.02–0.06 ——
+    /// 门限设 0.05 会正好切在字的中间，把字吃掉。
+    /// 挡不住外放只是没帮上忙，吃掉字是把事情弄坏了，两者代价不对等。
+    var voiceThreshold: Float = 0.02
 
     /// 送给模型之前，把内部静音压到最长这么久（秒）。0 = 不压。
     ///
@@ -64,10 +77,18 @@ final class AudioRecorder {
 
     /// 门限打开后的剩余保持字节数
     private var holdRemaining = 0
-    /// 压在手里还没写出去的那一块，以及当时的判断。见 appendGated 里的前瞻。
-    private var heldChunk: Data?
-    private var heldOpen = false
-    private var heldLoud = false
+    /// 压在手里还没写出去的那几块。见 appendGated 里的前瞻。
+    private struct HeldChunk {
+        var data: Data
+        var open: Bool
+        var loud: Bool
+        var level: Float
+    }
+    private var held: [HeldChunk] = []
+
+    /// "门限挡掉了有声音的内容"这条只提醒一次。每块都打的话，
+    /// 一秒钟十几行，真正有用的日志会被淹掉。
+    private var warnedAboutGating = false
 
     /// 本次录音听到过的最大响度。跟 peak 不同，它不会被读取清零 ——
     /// 「什么都没识别出来」到底是没声音还是全被门限挡掉了，全靠它区分。
@@ -147,10 +168,10 @@ final class AudioRecorder {
         sawSound = false
         committedOffset = 0
         lastLoudByte = 0
+        lastSoundByte = 0
         holdRemaining = 0
-        heldChunk = nil
-        heldOpen = false
-        heldLoud = false
+        held.removeAll(keepingCapacity: true)
+        warnedAboutGating = false
         loudest = 0
         gatedBytes = 0
         pcmLock.unlock()
@@ -299,8 +320,10 @@ final class AudioRecorder {
         let pending = pcm.subdata(in: committedOffset..<pcm.count)
         let endOffset = pcm.count
         let silenceBytes = pcm.count - lastLoudByte
-        // 这一段里一次都没越过人声门限 = 这段时间没人在说话
-        let silentThroughout = lastLoudByte <= committedOffset
+        // 判据是"有没有听到声音"，不是"有没有越过门限"。
+        // 用门限判的话，说得轻的那一整段会被当成没人说话直接跳过 ——
+        // 那不是省了一次推理，那是把字丢了。
+        let silentThroughout = lastSoundByte <= committedOffset
         if silentThroughout, pending.count >= Self.minSegmentBytes {
             // 直接定稿掉。纯静音送进模型不是没输出就是幻听，而不定稿的话
             // 未转写的部分会一直涨，后面每次刷新都越来越慢。
@@ -353,9 +376,23 @@ final class AudioRecorder {
     /// 判断「麦克风到底有没有在工作」的下限。跟人声门限是两回事：
     /// 这个只回答有没有信号，那个回答这信号是不是你在说话。
     private static let noiseFloor: Float = 0.01
-    /// 门限开了之后至少保持 0.4 秒。说话本身字与字之间就有停顿，
-    /// 只按瞬时响度开合会把句子剁碎，听上去像在吞字。
-    private static let gateHoldBytes = Int(0.4 * 16_000) * 2
+    /// 门限开了之后至少保持 0.8 秒。
+    ///
+    /// 原来是 0.4 秒，不够 —— 说话时词与词之间 0.2–0.6 秒的停顿很常见，
+    /// 停顿一超过保持时间，下一个词的起音就只剩前瞻那点保护了。
+    private static let gateHoldBytes = Int(0.8 * 16_000) * 2
+
+    /// 关门的阈值是开门阈值的这个比例。**回滞**：越过门限才开门，
+    /// 但要掉到远低于门限才关门。
+    ///
+    /// 开关用同一个阈值是这个门限第一版最大的毛病：语音的响度一直在起伏，
+    /// 一个字的尾音掉到门限以下再回来，中间那截就被写成静音了 ——
+    /// 表现成"句子中间少了一两个字"。
+    private static let closeRatio: Float = 0.35
+
+    /// 前瞻多少块。起音是渐强的，只前瞻一块（约 85 毫秒）挡不住 ——
+    /// 一个字的起音爬升常常比这长。
+    private static let lookaheadBlocks = 3
 
     // MARK: - 重采样
 
@@ -421,45 +458,82 @@ final class AudioRecorder {
     /// 必须持有 pcmLock。
     private func appendGated(_ chunk: Data, level: Float) {
         guard voiceThreshold > 0 else {
-            write(chunk, open: true, loud: level > Self.noiseFloor)
+            write(chunk, open: true, loud: level > Self.noiseFloor, level: level)
             return
         }
 
+        // 回滞：越过门限才开门，但要掉到远低于门限才关门。
+        // 语音的响度一直在起伏，开关用同一个阈值的话，一个字的尾音
+        // 掉下去再回来，中间那截就被写成静音了。
         let loud = level >= voiceThreshold
+        let stillSpeaking = level >= voiceThreshold * Self.closeRatio
+
         if loud {
             holdRemaining = Self.gateHoldBytes
-        } else {
+        } else if !stillSpeaking {
             holdRemaining = max(0, holdRemaining - chunk.count)
         }
-        let openNow = loud || holdRemaining > 0
+        // 落在回滞区间里（比关门线高、比开门线低）时保持不变 ——
+        // 那多半是一个字还没说完，不该开始倒计时关门。
+        let openNow = stillSpeaking && holdRemaining > 0 || loud
 
-        if let held = heldChunk {
-            write(held, open: heldOpen || loud, loud: heldLoud)
-        }
-        heldChunk = chunk
-        heldOpen = openNow
-        heldLoud = loud
+        held.append(HeldChunk(data: chunk, open: openNow, loud: loud, level: level))
+
+        // 前瞻：攒够几块再把最老的那块写出去。后面只要有一块开门，
+        // 前面这几块就一起放行 —— 起音是渐强的，最先那一点最容易被削掉。
+        guard held.count > Self.lookaheadBlocks else { return }
+        let oldest = held.removeFirst()
+        let laterOpens = held.contains { $0.open }
+        write(
+            oldest.data,
+            open: oldest.open || laterOpens,
+            loud: oldest.loud,
+            level: oldest.level
+        )
     }
 
     /// 必须持有 pcmLock。
-    private func write(_ chunk: Data, open: Bool, loud: Bool) {
+    private func write(_ chunk: Data, open: Bool, loud: Bool, level: Float) {
+        let audible = level > Self.noiseFloor
+
         if open {
             pcm.append(chunk)
         } else {
             pcm.append(Data(count: chunk.count))
             gatedBytes += chunk.count
+            // 挡掉有声音的内容就说明门限设高了。以前这件事完全看不见，
+            // 表现只是"句子里少了几个字" —— 最难查的那一类。
+            if audible, !warnedAboutGating {
+                warnedAboutGating = true
+                NSLog("MixDictate: 门限挡掉了有声音的音频（峰值 %.3f，门限 %.3f）——"
+                      + " 说得轻的字可能会丢，考虑调低 voiceThreshold",
+                      level, voiceThreshold)
+            }
         }
+
         if loud { lastLoudByte = pcm.count }
+        if audible { lastSoundByte = pcm.count }
     }
 
-    /// 把还压在手里的那一块写出去。停止录音时必须调用，
-    /// 否则最后约 0.1 秒会丢 —— 正好是最后一个字的尾音。
+    /// 把还压在手里的那几块写出去。停止录音时必须调用，
+    /// 否则最后几百毫秒会丢 —— 正好是最后一个字的尾音。
     ///
     /// 必须持有 pcmLock。
     private func flushHeld() {
-        guard let held = heldChunk else { return }
-        heldChunk = nil
-        write(held, open: heldOpen, loud: heldLoud)
+        guard !held.isEmpty else { return }
+        let pending = held
+        held.removeAll(keepingCapacity: true)
+        // 尾部这几块里只要有一块开着门，就整段放行。宁可多留一点环境音，
+        // 也不能把最后一个字削掉。
+        let anyOpen = pending.contains { $0.open }
+        for chunk in pending {
+            write(
+                chunk.data,
+                open: chunk.open || anyOpen,
+                loud: chunk.loud,
+                level: chunk.level
+            )
+        }
     }
 
     // MARK: - 压短停顿
