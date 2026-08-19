@@ -92,6 +92,9 @@ final class AudioRecorder {
 
     /// 本次录音听到过的最大响度。跟 peak 不同，它不会被读取清零 ——
     /// 「什么都没识别出来」到底是没声音还是全被门限挡掉了，全靠它区分。
+    /// 这次录音里门限有没有开过。开过之后就不再需要开口那段长前瞻。
+    private var hasOpenedThisRecording = false
+
     private var loudest: Float = 0
     /// 被门限写成静音的字节数
     private var gatedBytes = 0
@@ -189,6 +192,7 @@ final class AudioRecorder {
         holdRemaining = 0
         held.removeAll(keepingCapacity: true)
         warnedAboutGating = false
+        hasOpenedThisRecording = false
         loudest = 0
         gatedBytes = 0
         pcmLock.unlock()
@@ -435,7 +439,11 @@ final class AudioRecorder {
     /// 开关用同一个阈值是这个门限第一版最大的毛病：语音的响度一直在起伏，
     /// 一个字的尾音掉到门限以下再回来，中间那截就被写成静音了 ——
     /// 表现成"句子中间少了一两个字"。
-    private static let closeRatio: Float = 0.35
+    private static let closeRatio: Float = 0.15
+
+    /// 门限第一次打开之前，最多把多少块压在手里（约一秒）。
+    /// 专门保住一句话的第一个字，见 appendGated。
+    private static let openingHoldBlocks = 12
 
     /// 前瞻多少块。起音是渐强的，只前瞻一块（约 85 毫秒）挡不住 ——
     /// 一个字的起音爬升常常比这长。
@@ -509,34 +517,49 @@ final class AudioRecorder {
             return
         }
 
-        // 回滞：越过门限才开门，但要掉到远低于门限才关门。
-        // 语音的响度一直在起伏，开关用同一个阈值的话，一个字的尾音
-        // 掉下去再回来，中间那截就被写成静音了。
+        // **开门和关门不是同一个量级的判断。**
+        //
+        // 开门要严：外放漏进来的声音够不着门限，所以它开不了门。
+        // 关门要松 —— 门一旦被你的声音打开，就该一直开到你真的说完。
+        // 句末音调下降、字的尾音、轻声字，响度都会掉下去；拿开门那把尺子
+        // 去量关门，这些全会被切掉。
         let loud = level >= voiceThreshold
-        let stillSpeaking = level >= voiceThreshold * Self.closeRatio
+        let closeLevel = max(Self.noiseFloor, voiceThreshold * Self.closeRatio)
+        let stillSpeaking = level >= closeLevel
 
         if loud {
             holdRemaining = Self.gateHoldBytes
         } else if !stillSpeaking {
             holdRemaining = max(0, holdRemaining - chunk.count)
         }
-        // 落在回滞区间里（比关门线高、比开门线低）时保持不变 ——
-        // 那多半是一个字还没说完，不该开始倒计时关门。
+        // 落在中间区间（比关门线高、比开门线低）时不动倒计时 ——
+        // 那多半是一个字还没说完。
         let openNow = stillSpeaking && holdRemaining > 0 || loud
+        if openNow { hasOpenedThisRecording = true }
 
         held.append(HeldChunk(data: chunk, open: openNow, loud: loud, level: level))
 
-        // 前瞻：攒够几块再把最老的那块写出去。后面只要有一块开门，
-        // 前面这几块就一起放行 —— 起音是渐强的，最先那一点最容易被削掉。
-        guard held.count > Self.lookaheadBlocks else { return }
-        let oldest = held.removeFirst()
-        let laterOpens = held.contains { $0.open }
-        write(
-            oldest.data,
-            open: oldest.open || laterOpens,
-            loud: oldest.loud,
-            level: oldest.level
-        )
+        // **开口之前要多压一会儿。**
+        //
+        // 一句话的第一个字最容易被吃掉：门限起始是关着的，而起音是渐强的 ——
+        // 等它爬到门限之上，前面那点已经被判成静音写出去了。
+        // 所以门限第一次打开之前，把音频一直压在手里（最多约一秒）；
+        // 一旦开门，压着的这些全部放行，起音就完整保住了。
+        // 一秒内没开过门，说明那真是段环境音，照常按判断写。
+        // 用 while 而不是 if：门限第一次打开的那一刻，窗口从 12 块缩回 3 块，
+        // 手里一下子多出九块要放。一次只放一块的话要等九个回调才放完，
+        // 那九块的延迟会直接落到实时显示上。
+        let window = hasOpenedThisRecording ? Self.lookaheadBlocks : Self.openingHoldBlocks
+        while held.count > window {
+            let oldest = held.removeFirst()
+            let laterOpens = held.contains { $0.open }
+            write(
+                oldest.data,
+                open: oldest.open || laterOpens,
+                loud: oldest.loud,
+                level: oldest.level
+            )
+        }
     }
 
     /// 必须持有 pcmLock。
@@ -570,16 +593,13 @@ final class AudioRecorder {
         guard !held.isEmpty else { return }
         let pending = held
         held.removeAll(keepingCapacity: true)
-        // 尾部这几块里只要有一块开着门，就整段放行。宁可多留一点环境音，
-        // 也不能把最后一个字削掉。
-        let anyOpen = pending.contains { $0.open }
+        // **尾部一律放行。**
+        //
+        // 这是录音的最后几百毫秒 —— 正好是最后一个字的尾音，而句末音调
+        // 下降时它的响度本来就低。判错的代价完全不对称：多留一点环境音
+        // 没人会注意，少一个字一眼就看得见。
         for chunk in pending {
-            write(
-                chunk.data,
-                open: chunk.open || anyOpen,
-                loud: chunk.loud,
-                level: chunk.level
-            )
+            write(chunk.data, open: true, loud: chunk.loud, level: chunk.level)
         }
     }
 
