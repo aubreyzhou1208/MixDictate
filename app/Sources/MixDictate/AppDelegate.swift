@@ -41,7 +41,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var committedText = ""
     /// 未定稿那一段的最新转写，以及它对应的音频结束位置
     private var pendingText = ""
-    private var pendingEnd = 0
     /// 连续多少次检测到静音。第一次检测时用户往往还没开口，
     /// 立刻报「没有听到声音」是误报。
     private var silentTicks = 0
@@ -511,7 +510,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             silentTicks = 0
             committedText = ""
             pendingText = ""
-            pendingEnd = 0
             liveInserter.reset()
             state = .recording
             // 按下的这一刻离真正的转写请求还有约 0.8 秒，正好用来把
@@ -588,7 +586,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveInserter.reset()
         committedText = ""
         pendingText = ""
-        pendingEnd = 0
 
         // 立刻收掉，不留"已取消"那一下。
         //
@@ -684,7 +681,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard !text.isEmpty else { return }
 
             pendingText = text
-            pendingEnd = snapshot.endOffset
 
             if let boundary = snapshot.boundary {
                 // 这一段就此定稿 —— 之后不会再转写它。这是长录音不再越来越慢
@@ -769,12 +765,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !pendingText.isEmpty,
-           recorder.capturedBytes - pendingEnd < Self.reusePartialThresholdBytes {
-            NSLog("MixDictate: 尾部音频未再增长，直接用最后一次中间结果")
-            deliver(committedText + pendingText)
-            return
-        }
+        // 这里原来有个"尾部没怎么长就直接复用最后一次中间结果"的捷径。
+        // 删掉了：它省下的是一次推理，代价却是最后那 0.4 秒**永远不会被
+        // 转写** —— 而 0.4 秒足够装下一个字。用户看到的就是"最后一个字
+        // 有时候没有"。省一次推理换掉一个字，这笔交易不成立。
 
         Task { @MainActor in
             do {
@@ -848,9 +842,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return result
     }
-
-    /// 0.4 秒的 16kHz 单声道 16 位音频。低于这个增量就认为内容没变。
-    private static let reusePartialThresholdBytes = 12_800
 
     /// 把最终文字送到该去的地方。两条路都会走到这里：正常转写完，
     /// 或者直接复用最后一次中间结果。

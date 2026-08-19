@@ -329,10 +329,13 @@ final class AudioRecorder {
             // 未转写的部分会一直涨，后面每次刷新都越来越慢。
             committedOffset = endOffset
         }
+        // 前瞻还压在手里、没写进 pcm 的那几块。它们是**最新**的音频，
+        // 也就是你刚说出口的那个字。见下面为什么只在没有边界时才带上。
+        let heldTail = held.reduce(into: Data()) { $0.append($1.data) }
         pcmLock.unlock()
 
         // 太短的片段模型只会输出噪音，不如不发
-        guard pending.count >= 16_000 else { return nil }  // 约 0.5 秒
+        guard pending.count >= Self.minPartialBytes else { return nil }
         guard !silentThroughout else { return nil }
 
         // 末尾静音够长 = 说话人停顿了，可以在这里切一刀。
@@ -349,8 +352,19 @@ final class AudioRecorder {
             boundary = nil
         }
 
+        // 只在**没有边界**、也就是纯预览的时候，把前瞻压着的那几块也带上。
+        //
+        // 为什么要带：那几块是你刚说出口的音频，还没写进 pcm。不带的话
+        // 实时显示永远落后一个前瞻的长度 —— 表现就是"最后一个字要等松手
+        // 才出现"。前瞻加长到三块之后这个滞后被放大了三倍。
+        //
+        // 为什么有边界时不带：带了的话，转写覆盖的范围比 endOffset 更远，
+        // 而定稿只定到 endOffset —— 多出来那截会在下一段里被再转一次，
+        // 于是重复出字。预览不定稿，所以没有这个问题。
+        let audio = boundary == nil ? pending + heldTail : pending
+
         return (
-            Self.makeWAV(pcm: shortenPauses(pending), sampleRate: 16_000, channels: 1),
+            Self.makeWAV(pcm: shortenPauses(audio), sampleRate: 16_000, channels: 1),
             endOffset,
             boundary
         )
@@ -368,6 +382,12 @@ final class AudioRecorder {
     /// 原来是 0.6 秒，太敏感了：说话时想下一句该怎么讲，很容易停顿半秒多，
     /// 那不是句子结束。切在那里模型会补一个句号，句子就被硬生生断开了。
     private static let pauseBytes = Int(1.0 * 16_000) * 2
+    /// 中间结果最少要有 0.25 秒才发。
+    ///
+    /// 原来是 0.5 秒，意味着**最新的半秒钟永远不参与实时显示** ——
+    /// 正好是你刚说完的那个字。短片段模型确实容易输出噪音，但预览的噪音
+    /// 下一轮就被改掉了，而"最后一个字迟迟不出现"是每一句都能看见的。
+    private static let minPartialBytes = Int(0.25 * 16_000) * 2
     /// 段落至少要有 1.5 秒，否则切得太碎反而拖慢
     private static let minSegmentBytes = Int(1.5 * 16_000) * 2
     /// 段落上限 8 秒。到了就强制切，保证单次推理耗时有天花板。
