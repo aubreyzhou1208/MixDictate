@@ -141,7 +141,7 @@ if [ -f "$STATUS" ]; then
         *)
             if [ "$(python3 -c "print(1 if float('$gated') > 2.0 else 0)" 2>/dev/null)" = "1" ]; then
                 warn "最近一次听写有 ${gated} 秒被人声门限挡掉了 —— 说得轻的字可能丢了"
-                fix "./scripts/config.sh set voiceThreshold 0.01"
+                fix "./scripts/config.sh set voiceThreshold 0   # 关掉门限"
             else
                 pass "门限挡掉 ${gated} 秒（正常范围）"
             fi
@@ -156,7 +156,7 @@ if [ -f "$STATUS" ]; then
             if [ "$(python3 -c "print(1 if float('$peak') > 0.01 else 0)" 2>/dev/null)" = "1" ]; then
                 pass "最近一次听写麦克风峰值 $peak"
             else
-                fail "最近一次听写麦克风峰值 $peak —— 采集是全零"
+                fail "最近一次听写麦克风峰值 ${peak} —— 采集是全零"
                 fix "./scripts/config.sh set echoCancellation false"
             fi
             ;;
