@@ -284,13 +284,16 @@ struct SettingsView: View {
 
     /// 可折叠的一组。默认收起 —— 这些设置调好一次就很少再动，
     /// 却每次打开设置都要占掉整屏。
-    @ViewBuilder
     private func section<Content: View>(
         _ title: String,
         _ subtitle: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        GroupBox {
+        // 先把 content 求值成一个具体的 View 再往下传。DisclosureGroup 会把
+        // 传给它的闭包存起来（逃逸），而 @ViewBuilder 参数默认是非逃逸的 ——
+        // 直接在里面调 content() 就是"逃逸闭包捕获非逃逸参数"。
+        let inner = content()
+        return GroupBox {
             DisclosureGroup(
                 isExpanded: Binding(
                     get: { expanded.contains(title) },
@@ -300,7 +303,7 @@ struct SettingsView: View {
                 )
             ) {
                 VStack(alignment: .leading, spacing: 8) {
-                    content()
+                    inner
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 8)
