@@ -41,11 +41,40 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
     <!-- 菜单栏 App：不在 Dock 显示图标 -->
     <key>LSUIElement</key>               <true/>
 
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
+
     <key>NSMicrophoneUsageDescription</key>
     <string>MixDictate 需要麦克风来录下你的语音并在本机转成文字。音频不会离开这台电脑。</string>
 </dict>
 </plist>
 PLIST
+
+# ---------------------------------------------------------------- 图标
+
+# 从 assets/icon.png 现做 .icns。图标是用 Python 画的（assets/make_icon.py），
+# 仓库里不放二进制的 .icns —— 想换配色改几行重跑就行。
+ICON_SRC="$ROOT/assets/icon.png"
+if [ -f "$ICON_SRC" ] && command -v iconutil >/dev/null 2>&1; then
+    echo "==> 生成图标"
+    ICONSET="$(mktemp -d)/AppIcon.iconset"
+    mkdir -p "$ICONSET"
+    for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" \
+                "128 128x128" "256 128x128@2x" "256 256x256" \
+                "512 256x256@2x" "512 512x512" "1024 512x512@2x"; do
+        px="${spec%% *}"
+        name="${spec##* }"
+        sips -z "$px" "$px" "$ICON_SRC" --out "$ICONSET/icon_${name}.png" \
+            >/dev/null 2>&1
+    done
+    if iconutil -c icns "$ICONSET" -o "$BUNDLE/Contents/Resources/AppIcon.icns" \
+        2>/dev/null; then
+        echo "    图标已嵌入"
+    else
+        # 没有图标不该让构建失败 —— 那只是不好看，不是不能用
+        echo "    图标生成失败，跳过（不影响功能）"
+    fi
+    rm -rf "$(dirname "$ICONSET")"
+fi
 
 # 有固定身份就用固定身份。差别不在"更安全"，在于 TCC 认的是什么：
 # ad-hoc 没有身份，macOS 只能拿二进制哈希当身份 —— 重编译一次哈希就变，

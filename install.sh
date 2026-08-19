@@ -31,13 +31,33 @@ fi
 major="$(sw_vers -productVersion | cut -d. -f1)"
 [ "$major" -ge 13 ] || die "需要 macOS 13 或更新，当前是 $(sw_vers -productVersion)。"
 
-command -v python3 >/dev/null || die "找不到 python3。装一个：brew install python@3.12"
-
-if ! xcode-select -p >/dev/null 2>&1; then
-    die "缺少 Xcode 命令行工具。先跑：xcode-select --install"
+# 缺东西时不要只报错就跑掉。「先跑 xcode-select --install」这种提示，对
+# 不熟悉命令行的人等于一堵墙 —— 能替他按的就替他按了。
+if ! xcode-select -p >/dev/null 2>&1 || ! command -v swift >/dev/null; then
+    echo
+    echo "缺少 Xcode 命令行工具（编译 App 要用）。现在帮你装。"
+    echo "会弹出一个系统窗口，点「安装」，几分钟就好。"
+    echo
+    xcode-select --install 2>/dev/null || true
+    echo "装完之后再跑一次 ./install.sh 就行。"
+    exit 1
 fi
 
-command -v swift >/dev/null || die "找不到 swift。先跑：xcode-select --install"
+if ! command -v python3 >/dev/null; then
+    die "找不到 python3。先装 Homebrew（https://brew.sh），再跑：brew install python@3.12"
+fi
+
+# 版本不够的话必须现在说清楚。等到 pip 装 mlx-qwen3-asr 时才失败，
+# 报错会淹没在一大堆依赖解析的输出里，看不出真正的原因。
+py_ok="$(python3 -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)' 2>/dev/null || echo 0)"
+if [ "$py_ok" != "1" ]; then
+    printf '\n'
+    printf 'Python 版本太老：%s\n' "$(python3 --version 2>&1)"
+    printf '需要 3.10 或更新。装一个新的：\n\n'
+    printf '  brew install python@3.12\n\n'
+    printf '装完再跑一次 ./install.sh。\n'
+    exit 1
+fi
 
 echo "macOS $(sw_vers -productVersion) · $(uname -m) · $(python3 --version)"
 
