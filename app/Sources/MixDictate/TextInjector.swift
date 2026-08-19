@@ -42,6 +42,13 @@ enum TextInjector {
     private static let vKeyCode: CGKeyCode = 9
     private static let deleteKeyCode: CGKeyCode = 51
 
+    /// 所有合成输入都排在这一条队列上。
+    ///
+    /// **必须串行**：两次改写要是交错发出去，退格就会删到另一次刚打进去的
+    /// 字上面。**也必须离开主线程**：事件之间要留间隔（见下面），
+    /// 在主线程上 sleep 会把浮层和定时器一起卡住。
+    private static let inputQueue = DispatchQueue(label: "dev.mixdictate.input")
+
     @discardableResult
     static func insert(_ text: String, method: InsertionMethod = .paste) -> InjectionResult {
         guard AXIsProcessTrusted() else {
@@ -63,7 +70,8 @@ enum TextInjector {
         case .paste:
             pasteViaClipboard(text)
         case .typing:
-            typeUnicode(text)
+            // 事件之间有间隔，长文本会花上百毫秒 —— 不能在主线程上等
+            inputQueue.async { typeUnicode(text) }
         }
         return .inserted(method)
     }
@@ -109,6 +117,21 @@ enum TextInjector {
 
     // MARK: - 逐字输入
 
+    /// 两个合成按键事件之间至少隔这么久。
+    ///
+    /// **不留间隔会丢事件。** 目标 App 的事件队列被紧循环灌满时会丢弃或
+    /// 重排合成事件，这是 CGEvent 的老问题。而实时写入对"已经写进去多少字"
+    /// 的记忆，是照着**发出去的事件**算的 —— 丢一个事件这份记忆就永久偏了，
+    /// 之后每次改写都在错误的基础上退删，越改越歪。
+    ///
+    /// 表现是"整理之后吞字"：完整重转的结果跟拼接出来的实时文本差得最多，
+    /// 所以那一次改动最大，积累的偏差正好在那里爆出来。
+    private static let eventIntervalMicroseconds: useconds_t = 1_200
+
+    /// 退格发完到开始打字之间多等一会儿。这两批事件语义相反，
+    /// 混在一起被处理的话，打进去的字会落在还没删完的位置上。
+    private static let settleMicroseconds: useconds_t = 12_000
+
     /// 合成携带 Unicode 字符的按键事件，等价于把字敲进去。
     /// 不碰剪贴板，也不依赖目标 App 支持粘贴。
     private static func typeUnicode(_ text: String) {
@@ -133,16 +156,30 @@ enum TextInjector {
             up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
+            usleep(eventIntervalMicroseconds)
         }
     }
 
-    /// 直接敲字，不碰剪贴板。实时写入用这个 —— 剪贴板方案没法做增量修改。
-    static func typeText(_ text: String) {
-        typeUnicode(text)
+    /// 退掉尾巴再打新的，整批排进输入队列。
+    ///
+    /// 退格和打字必须是**同一个任务**：分成两次派发的话，中间可能插进
+    /// 另一次改写，退格就删到别人的字上了。两批之间也要留安顿时间，
+    /// 它们语义相反，混在一起处理会让新字落在还没删完的位置上。
+    static func replaceTail(deleting count: Int, with text: String) {
+        guard count > 0 || !text.isEmpty else { return }
+        inputQueue.async {
+            if count > 0 {
+                sendBackspaces(count)
+                usleep(settleMicroseconds)
+            }
+            if !text.isEmpty {
+                typeUnicode(text)
+            }
+        }
     }
 
-    /// 连发退格。实时写入时用来抹掉被模型改写掉的那一段。
-    static func sendBackspaces(_ count: Int) {
+    /// 连发退格。只应该在输入队列上调用 —— 它会 sleep。
+    private static func sendBackspaces(_ count: Int) {
         guard count > 0 else { return }
         let source = CGEventSource(stateID: .combinedSessionState)
 
@@ -157,6 +194,7 @@ enum TextInjector {
             else { return }
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
+            usleep(eventIntervalMicroseconds)
         }
     }
 

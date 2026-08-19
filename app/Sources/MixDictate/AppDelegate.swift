@@ -71,6 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startConfigWatch()
         writeStatusFile()
 
+        // 提前打开输入设备。第一次访问它要开 HAL 设备，是启动里最慢的一步 ——
+        // 留到按下说话键时才做，那几十毫秒的话就录不到了。
+        recorder.prewarm()
+
         // "它自己改了我的词表"这件事必须让人看见。学到的时候浮层说一声，
         // 不然词表会在用户不知情的情况下长出新规则。
         corrections.onLearned = { [weak self] wrong, right in

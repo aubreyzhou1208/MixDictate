@@ -35,13 +35,14 @@ final class LiveInserter {
         }
 
         let deletions = min(old.count - shared, maxDeletions)
-        if deletions > 0 {
-            TextInjector.sendBackspaces(deletions)
-        }
 
-        if shared < new.count {
-            TextInjector.typeText(String(new[shared...]))
-        }
+        // 退格和补字必须是一次调用。分开发的话，两次改写之间可能交错，
+        // 退格就删到另一次刚打进去的字上了 —— 而我们对"写进去多少"的记忆
+        // 是照着发出去的事件算的，一旦偏了，后面每次改写都在错误的基础上退删。
+        TextInjector.replaceTail(
+            deleting: deletions,
+            with: shared < new.count ? String(new[shared...]) : ""
+        )
 
         inserted = text
     }

@@ -138,8 +138,22 @@ final class AudioRecorder {
     ///   它知道系统正在往扬声器送什么，就从麦克风信号里把那部分减掉 ——
     ///   否则你在放视频时听写，视频里的人声会被一起录进去当成你说的话。
     ///   顺带还有降噪和自动增益。
+    /// 提前把输入设备打开好。**不开始录音，不亮麦克风指示灯。**
+    ///
+    /// 第一次访问 engine.inputNode 会去打开 HAL 输入设备，那是启动里最慢的
+    /// 一步。放在 App 启动时做掉，按下说话键之后就只剩装 tap 和 start()。
+    ///
+    /// 针对的是"刚按下就说话，前面几个字没录到" —— 那几十毫秒里声音是
+    /// 真的没进来，事后没有任何办法补回来。
+    func prewarm() {
+        guard !isRecording else { return }
+        _ = engine.inputNode.outputFormat(forBus: 0)
+        engine.prepare()
+    }
+
     func start(cancelEcho: Bool) throws {
         guard !isRecording else { return }
+        let began = Date()
 
         // 必须在引擎启动前设置
         let wantsEcho = cancelEcho && !voiceProcessingBlocked
@@ -203,6 +217,15 @@ final class AudioRecorder {
         try engine.start()
         startedAt = Date()
         isRecording = true
+
+        // 这段时间里的声音是真的没被录到。量出来才知道"前面的字没了"
+        // 是引擎慢，还是别的原因 —— 猜是没用的。
+        let elapsed = Date().timeIntervalSince(began) * 1000
+        if elapsed > 60 {
+            NSLog("MixDictate: 录音启动花了 %.0f 毫秒 —— 这期间说的话录不到", elapsed)
+        } else {
+            NSLog("MixDictate: 录音启动 %.0f 毫秒", elapsed)
+        }
     }
 
     /// 返回完整的 WAV 数据；录音太短或没声音时返回 nil。
