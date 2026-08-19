@@ -114,6 +114,9 @@ final class AudioRecorder {
     /// 回声消除当前是否真的开着
     var echoCancellationActive: Bool { voiceProcessingEnabled }
 
+    /// 上一次从按下到引擎真正跑起来花了多少毫秒。这段时间的声音没被录到。
+    private(set) var startLatencyMs: Double = -1
+
     /// 最近一次采集的输入格式。排错时这是关键的一行 ——
     /// 声道数是几，直接决定了转换会不会静默地吐出全零。
     private(set) var inputFormatDescription = ""
@@ -221,6 +224,7 @@ final class AudioRecorder {
         // 这段时间里的声音是真的没被录到。量出来才知道"前面的字没了"
         // 是引擎慢，还是别的原因 —— 猜是没用的。
         let elapsed = Date().timeIntervalSince(began) * 1000
+        startLatencyMs = elapsed
         if elapsed > 60 {
             NSLog("MixDictate: 录音启动花了 %.0f 毫秒 —— 这期间说的话录不到", elapsed)
         } else {

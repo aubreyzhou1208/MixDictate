@@ -17,9 +17,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 不这样的话，取消之后一两秒，那句话还是会自己蹦进输入框。
     private var sessionID = 0
 
+    /// 被取消掉的那些听写。它们的结果回来时要丢弃。
+    ///
+    /// 跟"有没有开始新一轮"是两回事：新一轮开始**不该**让上一段作废 ——
+    /// 那两段是要接在一起的。只有 Esc 取消才作废。
+    private var cancelledSessions: Set<Int> = []
+
     /// 最近一次听写录到的最大响度。写进状态文件给 verify.sh 看 ——
     /// "采集是不是全零"这件事骗过我好几轮，必须变成一个能从终端读到的数字。
     private var lastCapturePeak: Float = -1
+
+    /// 最近一次录音从按下到引擎真正跑起来花了多少毫秒。
+    /// 这段时间里的声音是真的没录到，所以"前面的字没了"要先看这个数。
+    private var lastStartLatencyMs: Double = -1
 
     /// 最近一次听写被人声门限写成静音的时长。门限吃字这件事以前完全
     /// 看不见 —— 只表现成"句子里少了几个字"，必须变成一个能读到的数字。
@@ -115,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "echoCancellation": recorder.echoCancellationActive,
             "inputFormat": recorder.inputFormatDescription,
             "lastCapturePeak": lastCapturePeak,
+            "lastStartLatencyMs": lastStartLatencyMs,
             "lastGatedSeconds": lastGatedSeconds,
             "state": String(describing: state),
             "lastError": lastError ?? "",
@@ -375,7 +386,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 分不分得开。分不开的话调什么门限都没用 —— 那时候该说的是
     /// 「戴耳机」，不是再给一个看起来很精确的数字。
     @objc private func calibrateThreshold() {
-        guard state == .idle || state == .failed else {
+        // **正在转写时也要能接着说。**
+        //
+        // 原来这里会直接丢弃按键（只响一声）。而转写要一秒多，把一段话
+        // 分几次说的时候，下一次按下经常正落在这个窗口里 —— 那一整段就
+        // 这么没了，而且用户只听到"哔"，根本不知道自己刚说的全丢了。
+        //
+        // 录音器这时其实是空闲的（endRecording 里已经 stop 过了），
+        // 挡住它的只有 state 这个变量。上一段的转写会照常回来、照常插入。
+        guard state == .idle || state == .failed || state == .transcribing else {
             NSSound.beep()
             return
         }
@@ -507,6 +526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder.maxPauseSeconds = max(0, config.maxPauseSeconds)
             try recorder.start(cancelEcho: config.echoCancellation)
             sessionID += 1
+            lastStartLatencyMs = recorder.startLatencyMs
             // 上一轮的观察还没到时间就作废：新一轮马上要往同一个输入框里写，
             // 再去比对上一段就会把两轮的内容混在一起
             corrections.cancel()
@@ -578,6 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 先让在飞的转写作废。取消之后过一秒那句话自己蹦出来，
         // 比不能取消更让人措手不及。
         sessionID += 1
+        cancelledSessions.insert(sessionID - 1)
         stopEscapeWatch()
         stopPartialUpdates()
         _ = recorder.stop(minimumDuration: 0)
@@ -749,15 +770,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 do {
                     let text = try await client.transcribe(wav: audio.full)
-                    guard session == sessionID else { return }
+                    guard !cancelledSessions.contains(session) else { return }
                     guard !text.isEmpty else {
-                        reportEmptyResult()
+                        reportEmptyResult(session: session)
                         return
                     }
-                    deliver(text)
+                    deliver(text, session: session)
                 } catch {
-                    guard session == sessionID else { return }
-                    reportFailure(error)
+                    guard !cancelledSessions.contains(session) else { return }
+                    reportFailure(error, session: session)
                 }
             }
             return
@@ -765,7 +786,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 长录音：拼接已定稿的段落，只转最后那一段
         if audio.tail.isEmpty {
-            deliver(committedText)
+            deliver(committedText, session: session)
             return
         }
 
@@ -777,21 +798,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             do {
                 let tail = try await client.transcribe(wav: audio.tail)
-                guard session == sessionID else { return }
+                guard !cancelledSessions.contains(session) else { return }
                 let text = committedText + tail
                 guard !text.isEmpty else {
-                    reportEmptyResult()
+                    reportEmptyResult(session: session)
                     return
                 }
-                deliver(text)
+                deliver(text, session: session)
             } catch {
-                guard session == sessionID else { return }
-                reportFailure(error)
+                guard !cancelledSessions.contains(session) else { return }
+                reportFailure(error, session: session)
             }
         }
     }
 
-    private func reportEmptyResult() {
+    /// 这次听写的结果回来时，用户是不是已经在说下一段了。
+    ///
+    /// 是的话，界面归这一段新的管：旧的那段不能去改状态、收浮层，
+    /// 也不能走实时写入的差异改写 —— 那个改写器现在记的是新一段的内容。
+    private func isStale(_ session: Int) -> Bool { session != sessionID }
+
+    private func reportEmptyResult(session: Int) {
         let reason: String
         if !recorder.heardSound {
             reason = silentCaptureMessage()
@@ -807,13 +834,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             reason = "没识别出内容"
         }
+        guard !isStale(session) else {
+            NSLog("MixDictate: 上一段没识别出内容（%@），但你已经在说下一段了", reason)
+            return
+        }
         overlay.setStatus(reason)
         overlay.update(reason, isFinal: true)
         overlay.hide(after: 1.6)
         state = .idle
     }
 
-    private func reportFailure(_ error: Error) {
+    private func reportFailure(_ error: Error, session: Int = -1) {
+        guard session < 0 || !isStale(session) else {
+            NSLog("MixDictate: 上一段转写失败：%@", error.localizedDescription)
+            return
+        }
         // 错误必须显示在浮层上。只写进菜单栏图标是不够的 ——
         // 菜单栏图标多了会被刘海挤掉，用户根本看不见，
         // 于是转写失败在他眼里就成了「什么都没发生」。
@@ -849,7 +884,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 把最终文字送到该去的地方。两条路都会走到这里：正常转写完，
     /// 或者直接复用最后一次中间结果。
-    private func deliver(_ text: String) {
+    private func deliver(_ text: String, session: Int) {
+        let stale = isStale(session)
+
+        // 用户已经在说下一段了。这一段的文字照样要插进去 —— 它们本来就是
+        // 要接在一起的 —— 但界面归新的那一段管，别去动状态和浮层。
+        //
+        // 实时写入的差异改写也不能用：那个改写器现在记的是新一段写进去的
+        // 内容，拿旧文字去跟它比对，退格会删到新一段的字上。
+        if stale {
+            NSLog("MixDictate: 上一段的结果回来了，用户已在说下一段 —— 直接插入")
+            TextInjector.insert(text, method: config.resolvedInsertionMethod)
+            corrections.noteInsertion(text)
+            return
+        }
+
         // 实时写入模式：文字早就在输入框里了，这里只要把它改成最终版本 ——
         // 不用再粘贴一次，那正是"还要再复制一遍"的慢感来源
         if config.liveInsertion {

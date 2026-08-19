@@ -118,6 +118,21 @@ if [ -f "$STATUS" ]; then
         esac
     fi
 
+    # 从按下说话键到引擎真正跑起来的时间。这段里的声音没被录到，
+    # 表现就是"前面几个字没了"，而且事后完全补不回来。
+    latency="$(field lastStartLatencyMs)"
+    case "$latency" in
+        ""|-*) : ;;
+        *)
+            if [ "$(python3 -c "print(1 if float('$latency') > 120 else 0)" 2>/dev/null)" = "1" ]; then
+                warn "录音启动要 ${latency} 毫秒 —— 按下就说话的话前面会丢字"
+                fix "把说话键按住半秒再开口，或把这个数字发给开发者"
+            else
+                pass "录音启动 ${latency} 毫秒"
+            fi
+            ;;
+    esac
+
     # 门限挡掉的时长。挡掉一点是正常的（句间静音），挡掉很多就说明
     # 门限设高了，而它的表现只是"句子里少了几个字"，光看结果看不出来。
     gated="$(field lastGatedSeconds)"
