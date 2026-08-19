@@ -17,7 +17,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BRANCH="claude/open-source-speech-to-text-9ntena"
+# 跟当前检出的分支走，而不是写死某一个。
+#
+# 写死开发分支的话，别人 clone 下来之后会被拉去追一个跟他无关的分支 ——
+# 他自己在 main 上，更新却把他推到别处，而且毫无提示。
+BRANCH="${MIXDICTATE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
+if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
+    BRANCH="main"
+fi
 LABEL="dev.mixdictate.autoupdate"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$HOME/Library/Logs/mixdictate"

@@ -28,7 +28,8 @@ echo "python3 $(python3 --version 2>&1)"
 # 「改了没生效」和「改了但没修好」长得一模一样，而这两件事完全不同。
 section "版本"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BRANCH="claude/open-source-speech-to-text-9ntena"
+BRANCH="${MIXDICTATE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
+[ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] || BRANCH="main"
 # 仓库路径要显式打出来。克隆到哪儿完全取决于当初在哪儿敲的 git clone，
 # 过几天没人记得住 —— 而所有维护命令都得在仓库里跑。
 echo "仓库路径  $ROOT"
