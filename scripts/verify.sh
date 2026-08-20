@@ -86,9 +86,9 @@ if [ -f "$STATUS" ]; then
     # macOS 会把"隐藏"记进偏好设置，以后每次启动都不显示 —— 而 App
     # 照常在跑，热键和插入都正常，只是没有任何地方能点进去。
     case "$(field menuBarVisible)" in
-        true)  pass "菜单栏图标可见" ;;
+        true)  pass "菜单栏图标可见（看不见的话：open -a MixDictate 会弹出设置窗口）" ;;
         false) fail "菜单栏图标被隐藏了"
-               fix "更新到最新版即可（启动时会强制显示）；图标仍不见就是菜单栏放不下了，先关掉几个别的图标" ;;
+               fix "更新到最新版即可（启动时会强制显示）" ;;
         *)     : ;;   # 旧版 App 没写这个字段，不当回事
     esac
 fi

@@ -127,6 +127,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 再次打开 App（Spotlight、Finder 双击、`open -a MixDictate`）时会走到这里 ——
+    /// LaunchServices 不会为已经在跑的 App 再起一个进程，而是通知这一个。
+    ///
+    /// **这是菜单栏之外的第二个入口，故意留的。** 菜单栏图标可能因为放不下、
+    /// 被拖走、或者状态栏服务自己抽风而看不见，而它一旦看不见，设置、校准、
+    /// 热词、退出就全都点不到了 —— App 好好地跑着，用户却打不开它。
+    /// 再打开一次就弹设置窗口，顺手把图标重新显示出来。
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication, hasVisibleWindows flag: Bool
+    ) -> Bool {
+        statusItem?.isVisible = true
+        refreshStatusItem()
+        // 菜单栏 App 平时不在前台，不主动激活的话设置窗口会开在别人后面 ——
+        // 那跟没开一样。
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+        return true
+    }
+
     // MARK: - 给终端看的状态文件
 
     /// 把 App 自己的内部状态写到磁盘上，让 doctor.sh 能读到。
