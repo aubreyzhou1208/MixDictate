@@ -183,10 +183,26 @@ if [ -f "$ROOT/scripts/autostart.sh" ] && [ -f "$LOGIN_ITEM" ]; then
     fi
 fi
 
-if launchctl print "gui/$UID/${script_label:-dev.mixdictate.app}" >/dev/null 2>&1; then
+# 看 plist 在不在：登录时 launchd 扫的就是 ~/Library/LaunchAgents。
+# job 现在加载没加载是本次会话的事 —— 取消开机自启时我们特意不 bootout
+# 正在跑的那个 App（那会当场把它关掉），所以那两件事经常不一致。
+autostart_plist="$HOME/Library/LaunchAgents/${script_label:-dev.mixdictate.app}.plist"
+if [ -f "$autostart_plist" ]; then
     pass "已开启（登录后自动拉起）"
+    if grep -q "KeepAlive" "$autostart_plist"; then
+        fail "plist 里有 KeepAlive —— 退出 App 后 launchd 会把它拉回来，等于关不掉"
+        fix "./scripts/autostart.sh install 重装一遍（新版不写 KeepAlive）"
+    fi
 else
     warn "没开 —— 重启后要自己打开一次（设置里勾「开机自动启动」，或 ./scripts/autostart.sh install）"
+fi
+
+# 同时开着两个的话：两套热键监听、两个转写服务抢同一个端口，
+# 表现成"按键有时候没反应"，而两个菜单栏图标长得一模一样，看不出来。
+running_count="$(pgrep -fc '/MixDictate.app/Contents/MacOS/MixDictate' 2>/dev/null || echo 0)"
+if [ "${running_count:-0}" -gt 1 ]; then
+    fail "同时跑着 $running_count 个 MixDictate"
+    fix "pkill -f MixDictate 之后重开一个（新版启动时会自己挡掉重复的）"
 fi
 
 # ---------------------------------------------------------------- 服务

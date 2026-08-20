@@ -41,11 +41,9 @@ install)
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- 崩了自动拉起，10 秒节流，避免出问题时疯狂重启刷屏 -->
-    <key>KeepAlive</key>
-    <true/>
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
+    <!-- 没有 KeepAlive：它会在 App 退出后把它拉回来，菜单里的「退出」
+         就变成"闪一下又回来"。开机自启的意思是登录时起一次，
+         不是"你不许退出"。设置界面里那个开关装的是同一份 plist。 -->
 
     <key>StandardOutPath</key>
     <string>$LOGS/$LABEL.log</string>
@@ -64,16 +62,29 @@ PLIST_EOF
     ;;
 
 uninstall)
-    launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+    # 先删 plist —— 决定"下次登录还起不起"的就是这个文件。
     rm -f "$PLIST"
-    echo "已卸载开机自启。"
+
+    # bootout 会把 launchd 正管着的那个进程 SIGTERM 掉。App 正开着的时候
+    # 取消开机自启，不该顺手把它关了 —— 用户说的是"以后别自己启动"。
+    if launchctl print "gui/$UID/$LABEL" 2>/dev/null | grep -qE '^[[:space:]]*state = running'; then
+        echo "已取消开机自启。当前这个 MixDictate 继续开着，下次登录不再自动启动。"
+    else
+        launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+        echo "已卸载开机自启。"
+    fi
     ;;
 
 status)
-    if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
-        echo "$LABEL  已加载"
+    # 看 plist 在不在，而不是看 job 加载没加载：登录时 launchd 扫的就是
+    # ~/Library/LaunchAgents，job 现在在不在是本次会话的事。
+    if [ -f "$PLIST" ]; then
+        echo "$LABEL  开机自启：已开"
     else
-        echo "$LABEL  未加载"
+        echo "$LABEL  开机自启：未开"
+    fi
+    if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+        echo "$LABEL  当前会话里 launchd 管着它"
     fi
     ;;
 

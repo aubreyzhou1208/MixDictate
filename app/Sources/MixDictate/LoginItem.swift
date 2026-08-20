@@ -28,12 +28,33 @@ enum LoginItem {
         return Bundle.main.executableURL?.path ?? installed
     }
 
-    /// 真的问一遍 launchd，而不是看 plist 在不在。
-    /// 文件还在但没加载（比如手动删过 job）时，"文件在"会骗人。
+    /// 「下次登录还起不起」由 plist 在不在决定 —— 登录时 launchd 扫的就是
+    /// ~/Library/LaunchAgents。job 现在加载没加载是**这一次会话**的事，
+    /// 跟开机自启是两码事，拿它当开关的值会答非所问。
     static var isEnabled: Bool {
-        guard FileManager.default.fileExists(atPath: plistURL.path) else { return false }
-        return launchctl(["print", "gui/\(getuid())/\(label)"]).status == 0
+        FileManager.default.fileExists(atPath: plistURL.path)
     }
+
+    /// launchd 现在管着的那个进程的 pid，没有就是 nil。
+    ///
+    /// 需要它是因为 `bootout` 会**把那个进程 SIGTERM 掉**。用户只是取消个
+    /// 勾选，App 却当场退出 —— 这个代价跟他要求的事完全不成比例。
+    private static var managedPID: pid_t? {
+        let result = launchctl(["print", "gui/\(getuid())/\(label)"])
+        guard result.status == 0 else { return nil }
+        for line in result.output.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2,
+                  parts[0].trimmingCharacters(in: .whitespaces) == "pid",
+                  let pid = pid_t(parts[1].trimmingCharacters(in: .whitespaces))
+            else { continue }
+            return pid
+        }
+        return nil
+    }
+
+    /// launchd 管的就是当前这个进程。此时绝不能 bootout。
+    private static var managesThisProcess: Bool { managedPID == getpid() }
 
     struct Failure: LocalizedError {
         let message: String
@@ -55,9 +76,9 @@ enum LoginItem {
             "Label": label,
             "ProgramArguments": [binary],
             "RunAtLoad": true,
-            // 崩了自动拉起，10 秒节流，避免出问题时疯狂重启刷屏
-            "KeepAlive": true,
-            "ThrottleInterval": 10,
+            // 没有 KeepAlive。它会在 App 退出后 10 秒把它拉回来 ——
+            // 于是菜单里的「退出」变成"闪一下又回来"，用户根本关不掉它。
+            // 开机自启的意思是"登录时起一次"，不是"你不许退出"。
             "StandardOutPath": logDirectory.appendingPathComponent("\(label).log").path,
             "StandardErrorPath": logDirectory.appendingPathComponent("\(label).err.log").path,
         ]
@@ -65,26 +86,45 @@ enum LoginItem {
             fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: plistURL, options: .atomic)
 
-        // 没装过时 bootout 会失败，那不算错
+        // 之前被 `launchctl disable` 关过的话，plist 写回去也不会生效 ——
+        // 那条禁用记录存在另一个数据库里，删 plist 清不掉它。
+        _ = launchctl(["enable", "gui/\(getuid())/\(label)"])
+
+        guard isEnabled else {
+            throw Failure(message: "plist 写完了但 \(plistURL.path) 不在")
+        }
+
+        // 当前这个 App 就是 launchd 拉起来的：job 已经在了，plist 也写回去了，
+        // 到此为止。再走 bootout → bootstrap 的话，第一步就把自己杀了。
+        if managesThisProcess { return }
+
+        // 让 launchd 现在就收下这份 plist —— 顺便验一遍它是能被接受的。
+        // 只写文件不加载的话，写错了要到下次登录才发现，而那时候没人在看。
+        // 没装过时 bootout 会失败，那不算错。
         _ = launchctl(["bootout", "gui/\(getuid())/\(label)"])
         let result = launchctl(["bootstrap", "gui/\(getuid())", plistURL.path])
         guard result.status == 0 else {
             throw Failure(message: "launchctl bootstrap 失败（\(result.status)）：\(result.output)")
         }
-        // 装完复查一遍。launchctl 返回 0 不代表 job 真的在 ——
-        // 这个项目里"没报错但没生效"出现过太多次了。
-        guard isEnabled else {
-            throw Failure(message: "已经写好 \(plistURL.path)，但 launchd 里查不到这个任务")
-        }
     }
 
     static func disable() throws {
-        _ = launchctl(["bootout", "gui/\(getuid())/\(label)"])
+        // 先删 plist。决定"下次登录还起不起"的就是这个文件，
+        // 删掉它这件事就已经办完了。
         if FileManager.default.fileExists(atPath: plistURL.path) {
             try FileManager.default.removeItem(at: plistURL)
         }
+        _ = launchctl(["enable", "gui/\(getuid())/\(label)"])
+
+        // 只有当 launchd 管的不是我们自己时才卸载 job。
+        // 是自己的话 bootout 会当场把 App 关掉 —— 用户点的是"以后别自己启动"，
+        // 不是"现在退出"。job 留到本次注销为止，没有 plist 就不会再回来。
+        if !managesThisProcess {
+            _ = launchctl(["bootout", "gui/\(getuid())/\(label)"])
+        }
+
         guard !isEnabled else {
-            throw Failure(message: "卸载没生效，launchd 里还留着这个任务")
+            throw Failure(message: "删不掉 \(plistURL.path)")
         }
     }
 
