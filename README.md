@@ -550,6 +550,7 @@ MLX 的 Metal 计算核是**首次推理时才编译**的。只加载模型权�
   "stripFillers": true,
   "fullwidthPunctuation": true,
   "model": "Qwen/Qwen3-ASR-0.6B",
+  "alwaysCopy": true,
   "insertionMethod": "paste",
   "echoCancellation": true,
   "rawOutput": false,

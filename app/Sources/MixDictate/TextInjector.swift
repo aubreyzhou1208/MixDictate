@@ -49,8 +49,15 @@ enum TextInjector {
     /// 在主线程上 sleep 会把浮层和定时器一起卡住。
     private static let inputQueue = DispatchQueue(label: "dev.mixdictate.input")
 
+    /// - Parameter keepOnPasteboard: 插完之后把这段文字留在剪贴板上。
+    ///   粘贴那条路本来会还原用户原来的剪贴板内容，开着这个就不还原了 ——
+    ///   还原的话，"每次都复制一份"这个承诺会在半秒后被自己撤销。
     @discardableResult
-    static func insert(_ text: String, method: InsertionMethod = .paste) -> InjectionResult {
+    static func insert(
+        _ text: String,
+        method: InsertionMethod = .paste,
+        keepOnPasteboard: Bool = false
+    ) -> InjectionResult {
         guard AXIsProcessTrusted() else {
             // 权限缺失时也先把文字放进剪贴板，用户至少能自己 Cmd+V
             copyToPasteboard(text)
@@ -68,8 +75,9 @@ enum TextInjector {
 
         switch method {
         case .paste:
-            pasteViaClipboard(text)
+            pasteViaClipboard(text, keepOnPasteboard: keepOnPasteboard)
         case .typing:
+            if keepOnPasteboard { copyToPasteboard(text) }
             // 事件之间有间隔，长文本会花上百毫秒 —— 不能在主线程上等
             inputQueue.async { typeUnicode(text) }
         }
@@ -78,9 +86,9 @@ enum TextInjector {
 
     // MARK: - 剪贴板 + Cmd+V
 
-    private static func pasteViaClipboard(_ text: String) {
+    private static func pasteViaClipboard(_ text: String, keepOnPasteboard: Bool = false) {
         let pasteboard = NSPasteboard.general
-        let previous = pasteboard.string(forType: .string)
+        let previous = keepOnPasteboard ? nil : pasteboard.string(forType: .string)
         copyToPasteboard(text)
 
         // 给一点时间：用户刚松开说话键，修饰键状态需要先落定，
@@ -88,6 +96,7 @@ enum TextInjector {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
             postPaste()
 
+            guard !keepOnPasteboard else { return }
             // 粘贴是异步的，等目标 App 真正读完剪贴板再还原
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 pasteboard.clearContents()

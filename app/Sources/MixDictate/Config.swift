@@ -153,6 +153,13 @@ struct Config {
     /// 代价见设置界面里的说明 —— 默认关闭。
     var liveInsertion: Bool = false
 
+    /// 每次听写完都把完整结果留在剪贴板上。
+    ///
+    /// 默认开：文字插错地方、插不进去、或者用户中途点走了，都是"整段话没了"，
+    /// 而剪贴板里那份是最后一道保险 —— 代价只是覆盖掉上一次复制的东西。
+    /// 这两件事的分量差得很远。
+    var alwaysCopy: Bool = true
+
     /// 文字送进输入框的方式。粘贴最快，逐字输入兼容性更好。
     /// 安全输入模式下两者都会被系统拦截，那时会自动改走辅助功能接口。
     var insertionMethod: String = InsertionMethod.paste.rawValue
@@ -251,6 +258,8 @@ extension Config: Codable {
             ?? fallback.fullPassMaxSeconds
         liveInsertion = try c.decodeIfPresent(Bool.self, forKey: .liveInsertion)
             ?? fallback.liveInsertion
+        alwaysCopy = try c.decodeIfPresent(Bool.self, forKey: .alwaysCopy)
+            ?? fallback.alwaysCopy
         insertionMethod = try c.decodeIfPresent(String.self, forKey: .insertionMethod)
             ?? fallback.insertionMethod
         model = try c.decodeIfPresent(String.self, forKey: .model)

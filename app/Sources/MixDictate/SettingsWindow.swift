@@ -258,6 +258,15 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Toggle("每次听写完都复制到剪贴板", isOn: $model.config.alwaysCopy)
+                    .help("""
+                        默认开。听写完的完整文字一定会留在剪贴板上，按 Cmd+V 就能拿回来。
+
+                        为什么值得：文字插错地方、插不进去、或者你中途点走了，结果都是"整段话没了"，而你说的话是重建不出来的。代价只是覆盖掉你上一次复制的东西——这两件事的分量差得很远。
+
+                        关掉的话，只有在文字送不进输入框时才会走剪贴板兜底。
+                        """)
+
                 Picker("送进去的方式", selection: $model.config.insertionMethod) {
                     ForEach(InsertionMethod.allCases, id: \.rawValue) { option in
                         Text(option.label).tag(option.rawValue)

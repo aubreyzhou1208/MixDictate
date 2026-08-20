@@ -970,7 +970,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 内容，拿旧文字去跟它比对，退格会删到新一段的字上。
         if stale {
             NSLog("MixDictate: 上一段的结果回来了，用户已在说下一段 —— 直接插入")
-            TextInjector.insert(text, method: config.resolvedInsertionMethod)
+            TextInjector.insert(text, method: config.resolvedInsertionMethod,
+                                keepOnPasteboard: config.alwaysCopy)
             corrections.noteInsertion(text)
             return
         }
@@ -979,6 +980,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 不用再粘贴一次，那正是"还要再复制一遍"的慢感来源
         if config.liveInsertion {
             liveInserter.update(to: text)
+            if config.alwaysCopy { TextInjector.copyToPasteboard(text) }
             // 让指示器显示一下"完成"再消失，用户才知道这一轮结束了
             overlay.setStatus("完成")
             overlay.hide(after: 0.8)
@@ -990,7 +992,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 先把最终结果显示出来，用户能看到它跟中间结果差在哪
         overlay.update(text, isFinal: true)
 
-        switch TextInjector.insert(text, method: config.resolvedInsertionMethod) {
+        switch TextInjector.insert(text, method: config.resolvedInsertionMethod,
+                                   keepOnPasteboard: config.alwaysCopy) {
         case .inserted(let method):
             NSLog("MixDictate: 已通过 %@ 插入", method.rawValue)
             overlay.hide(after: 1.2)
