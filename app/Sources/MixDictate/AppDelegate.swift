@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.isVisible = true
         buildMenu()
         refreshStatusItem()
+        verifyStatusItemPlaced()
 
         requestMicrophoneAccess()
         checkAccessibilityOrWait()
@@ -124,6 +125,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.show(style: .compact, status: "学会了")
             overlay.update("以后「\(wrong)」自动改成「\(right)」", isFinal: true)
             overlay.hide(after: 3)
+        }
+    }
+
+    /// 图标建出来了不等于它真的在菜单栏上。`isVisible` 只是我们提的要求，
+    /// 而 button 为 nil、或者 button 没有 window，都表示系统压根没给它位置 ——
+    /// 这两种情况下 `isVisible` 仍然是 true，从外面看跟正常的一模一样。
+    ///
+    /// 所以过两秒回头核对一次，没放上去就整个重建一遍。菜单栏是这个 App
+    /// 唯一的图形入口，重建的代价远小于"用户打不开它"。
+    private func verifyStatusItemPlaced(attempt: Int = 0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            if statusItem?.button?.window != nil {
+                if attempt > 0 { NSLog("MixDictate: 菜单栏图标重建成功") }
+                writeStatusFile()
+                return
+            }
+            guard attempt < 3 else {
+                NSLog("MixDictate: 菜单栏图标始终放不上去，重建 3 次都没成功")
+                writeStatusFile()
+                return
+            }
+            NSLog("MixDictate: 菜单栏图标没被放进菜单栏，重建（第 \(attempt + 1) 次）")
+            if let old = statusItem {
+                NSStatusBar.system.removeStatusItem(old)
+            }
+            statusItem = NSStatusBar.system.statusItem(
+                withLength: NSStatusItem.variableLength)
+            statusItem.autosaveName = "MixDictateStatusItem"
+            statusItem.isVisible = true
+            buildMenu()
+            refreshStatusItem()
+            verifyStatusItemPlaced(attempt: attempt + 1)
         }
     }
 
@@ -178,8 +212,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "lastCapturePeak": lastCapturePeak,
             "lastStartLatencyMs": lastStartLatencyMs,
             "lastGatedSeconds": lastGatedSeconds,
-            // 图标看不见的时候，这是唯一能从终端问出真相的地方
+            // 图标看不见的时候，这是唯一能从终端问出真相的地方。
+            // isVisible 只是我们提的要求，不代表系统真的给了位置：
+            // button 为 nil、或者它没有 window，都表示这一项**根本没被放进
+            // 菜单栏**，而这两种情况下 isVisible 照样是 true。
             "menuBarVisible": statusItem?.isVisible ?? false,
+            "menuBarHasButton": statusItem?.button != nil,
+            "menuBarPlaced": statusItem?.button?.window != nil,
+            "menuBarWidth": statusItem?.button?.frame.width ?? -1,
+            "menuBarImageOK": statusImage != nil,
             "state": String(describing: state),
             "lastError": lastError ?? "",
             "appPath": Bundle.main.bundleURL.path,
@@ -1208,7 +1249,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 菜单栏
 
     private func refreshStatusItem() {
-        guard let button = statusItem.button else { return }
+        // button 是 nil 就等于菜单栏上什么都不画。原来这里直接 return，
+        // 于是"图标不见了"连一条日志都没有。
+        guard let button = statusItem?.button else {
+            NSLog("MixDictate: 状态栏项没有 button —— 菜单栏上不会有任何东西")
+            return
+        }
 
         if let image = statusImage {
             button.image = image
