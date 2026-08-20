@@ -216,7 +216,7 @@ if [ -n "$app_pid" ] && [ -x "$APP_BINARY" ]; then
     started_at="$(date -j -f '%a %b %e %T %Y' "$started_raw" +%s 2>/dev/null || true)"
     binary_at="$(stat -f %m "$APP_BINARY" 2>/dev/null || true)"
     if [ -n "$started_at" ] && [ -n "$binary_at" ] && [ "$started_at" -lt "$binary_at" ]; then
-        fail "跑着的 MixDictate（pid $app_pid）比 /Applications 里的二进制还老 —— 它跑的是旧代码"
+        fail "跑着的 MixDictate（pid ${app_pid}）比 /Applications 里的二进制还老 —— 它跑的是旧代码"
         fix "pkill -x MixDictate && open /Applications/MixDictate.app"
     else
         pass "跑着的是当前这份代码"
