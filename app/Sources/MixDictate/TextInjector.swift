@@ -67,6 +67,9 @@ enum TextInjector {
         // 安全输入模式下合成按键一律无效，先走辅助功能接口
         if IsSecureEventInputEnabled() {
             if insertViaAccessibility(text) {
+                // 这条路不碰剪贴板，所以"每次都留一份"要在这里补上，
+                // 否则安全输入模式下那一段话就没有兜底了。
+                if keepOnPasteboard { copyToPasteboard(text) }
                 return .insertedViaAccessibility
             }
             copyToPasteboard(text)

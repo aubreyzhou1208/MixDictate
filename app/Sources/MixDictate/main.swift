@@ -5,10 +5,6 @@ import AppKit
 // 所以这里必须自己留一份强引用。
 private var retainedDelegate: AppDelegate?
 
-// main.swift 的顶层代码在 Swift 5 语言模式下不是 main actor 隔离的，
-// 而 AppDelegate 标了 @MainActor（它要碰 NSStatusItem 这些 UI 状态）。
-// 程序入口本来就跑在主线程上，用 assumeIsolated 把这个事实告诉编译器 ——
-// 比给 AppDelegate 摘掉 @MainActor 安全得多。
 // 同一时刻只允许一个 MixDictate：两份的话有两套热键监听、两个转写服务抢
 // 同一个端口，而两个菜单栏图标长得一模一样，从外面完全看不出来。
 //
@@ -45,15 +41,30 @@ private func makeWayForRunningInstance() -> Bool {
 
     NSLog("MixDictate: 发现 \(stale.count) 个跑着旧代码的实例，请它们退出")
     stale.forEach { $0.terminate() }
+
     // 等它真的走。terminate() 只是发个信号 —— 没等就往下走的话，
     // 菜单栏和热键会跟一个还没死透的进程抢。
-    for _ in 0..<20 where stale.contains(where: { !$0.isTerminated }) {
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+    //
+    // 判断"还在不在"用 kill(pid, 0) 而不是 isTerminated：这时候
+    // NSApplication 还没起来，主 run loop 也没在转，而 isTerminated 要靠
+    // 工作区通知来更新 —— 它可能一直停在旧值上，把这里变成死等。
+    // EPERM 表示进程还在，只是我们没权限给它发信号。
+    func alive(_ app: NSRunningApplication) -> Bool {
+        kill(app.processIdentifier, 0) == 0 || errno == EPERM
     }
-    stale.filter { !$0.isTerminated }.forEach { $0.forceTerminate() }
+    var waited = 0
+    while waited < 20, stale.contains(where: alive) {
+        Thread.sleep(forTimeInterval: 0.1)
+        waited += 1
+    }
+    stale.filter(alive).forEach { $0.forceTerminate() }
     return false
 }
 
+// main.swift 的顶层代码在 Swift 5 语言模式下不是 main actor 隔离的，
+// 而 AppDelegate 标了 @MainActor（它要碰 NSStatusItem 这些 UI 状态）。
+// 程序入口本来就跑在主线程上，用 assumeIsolated 把这个事实告诉编译器 ——
+// 比给 AppDelegate 摘掉 @MainActor 安全得多。
 MainActor.assumeIsolated {
     if makeWayForRunningInstance() { exit(0) }
 

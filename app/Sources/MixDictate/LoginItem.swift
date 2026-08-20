@@ -114,8 +114,6 @@ enum LoginItem {
         if FileManager.default.fileExists(atPath: plistURL.path) {
             try FileManager.default.removeItem(at: plistURL)
         }
-        _ = launchctl(["enable", "gui/\(getuid())/\(label)"])
-
         // 只有当 launchd 管的不是我们自己时才卸载 job。
         // 是自己的话 bootout 会当场把 App 关掉 —— 用户点的是"以后别自己启动"，
         // 不是"现在退出"。job 留到本次注销为止，没有 plist 就不会再回来。
