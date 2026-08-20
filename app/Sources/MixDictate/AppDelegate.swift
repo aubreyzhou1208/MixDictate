@@ -152,7 +152,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard attempt < 3 else {
-                NSLog("MixDictate: 菜单栏图标始终放不上去，重建 3 次都没成功")
+                NSLog("MixDictate: 菜单栏图标始终放不上去，重建 3 次都没成功，改用 Dock 图标")
+                // 菜单栏这条路走不通就换一条，别让用户彻底没有入口。
+                // Dock 图标丑一点，但点得到 —— 而点不到的 App 等于没装。
+                // 点 Dock 图标会走 applicationShouldHandleReopen，弹出设置窗口。
+                NSApp.setActivationPolicy(.regular)
                 writeStatusFile()
                 return
             }
