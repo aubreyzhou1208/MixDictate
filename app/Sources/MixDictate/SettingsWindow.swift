@@ -317,10 +317,13 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            // 不写这一句的话，这一栏会缩到刚好包住文字，比上下其他几栏窄一截。
-            // 别的栏里都有 Spacer 或者 maxWidth: .infinity 把宽度撑满。
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // 先加内边距再撑满，顺序反过来的话，撑满的是不含内边距那一层，
+            // 加上 padding 之后总宽比可用宽度多 12。
+            //
+            // 不撑满的话这一栏会缩到刚好包住文字，比上下其他几栏窄一截 ——
+            // 别的栏里都有 Spacer 或者 maxWidth: .infinity 把宽度顶开。
             .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
