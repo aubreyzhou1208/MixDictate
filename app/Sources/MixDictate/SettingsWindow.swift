@@ -37,24 +37,34 @@ final class SettingsModel: ObservableObject {
 
     // MARK: - 录制说话键
 
-    /// 直接监听 flagsChanged 而不是让用户从列表里选 —— "按一下你想用的键"
+    /// 直接监听按键而不是让用户从列表里选 —— "按一下你想用的键"
     /// 比"从一堆键码里挑"直观得多。
+    ///
+    /// **必须同时监听 flagsChanged 和 keyDown。** 只听 flagsChanged 的话，
+    /// 按回车、字母这些普通键根本产生不了事件 —— 用户按了完全没反应，
+    /// 界面还显示着原来那个键，看上去像"改不了"。不能用要**说出来**，
+    /// 不能默默无视。
     func startCapturingKey() {
         guard !isCapturingKey else { return }
         isCapturingKey = true
         statusMessage = "按一下你想用的修饰键…"
 
-        captureMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        captureMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.flagsChanged, .keyDown]
+        ) { [weak self] event in
             guard let self else { return event }
 
-            // 只接受已知可用的修饰键。普通字母键不能用 —— 按住说话期间
-            // 那个字母会一直重复输入到当前输入框里。
-            if HotKeyMonitor.selectableKeys.contains(where: { $0.code == event.keyCode }) {
+            if HotKeyMonitor.isSelectable(event.keyCode) {
                 self.config.pushToTalkKeyCode = event.keyCode
                 self.statusMessage = ""
                 self.stopCapturingKey()
+            } else if event.type == .keyDown {
+                // 普通键按住时会一直往输入框里输入，而全局监听拦不住它 ——
+                // 只有本地监听能吞掉事件，说话键得在别的 App 前台时也管用。
+                self.statusMessage = "回车、字母这类键不能用作说话键 —— "
+                    + "按住的时候它会一直往输入框里打字。请用 Option / Command / Control / Shift / Fn。"
             } else {
-                self.statusMessage = "这个键不能用，换一个修饰键（Option / Command / Control / Shift）"
+                self.statusMessage = "这个修饰键不在支持列表里，换一个试试"
             }
             return nil  // 吞掉事件，别传给别人
         }

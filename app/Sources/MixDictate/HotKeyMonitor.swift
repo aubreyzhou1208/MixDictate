@@ -30,7 +30,18 @@ final class HotKeyMonitor {
         (62, "右 Control"),
         (59, "左 Control"),
         (60, "右 Shift"),
+        (55, "左 Command"),
+        (56, "左 Shift"),
+        (63, "Fn"),
     ]
+
+    /// 这个键码是不是一个可以按住不放的修饰键。
+    ///
+    /// 只有修饰键能用作说话键：普通键（回车、字母）按住的时候会**一直往
+    /// 当前输入框里输入**，而全局监听又拦不住它（只有本地监听能吞事件）。
+    static func isSelectable(_ keyCode: UInt16) -> Bool {
+        selectableKeys.contains { $0.code == keyCode }
+    }
 
     static func displayName(for keyCode: UInt16) -> String {
         selectableKeys.first { $0.code == keyCode }?.name ?? "键 \(keyCode)"

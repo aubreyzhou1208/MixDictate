@@ -1,5 +1,23 @@
 import AppKit
 
+/// 自己实现拖动，不用 isMovableByWindowBackground。
+///
+/// 系统那套拖动会触发 macOS 的窗口贴边分屏 —— 拖到屏幕边缘就弹出
+/// "左右分屏"的提示，而这个浮层根本不是一个正经窗口，被塞进分屏毫无意义。
+/// 自己按鼠标位移调用 setFrameOrigin 就绕开了整套贴边逻辑，想放哪儿放哪儿。
+final class DraggableEffectView: NSVisualEffectView {
+    override func mouseDragged(with event: NSEvent) {
+        guard let window else { return }
+        // deltaY 的方向跟屏幕坐标相反
+        window.setFrameOrigin(
+            NSPoint(
+                x: window.frame.origin.x + event.deltaX,
+                y: window.frame.origin.y - event.deltaY
+            )
+        )
+    }
+}
+
 /// 录音时显示实时转写结果的浮层。
 ///
 /// 关键约束：这个窗口**绝对不能抢焦点**。用 .nonactivatingPanel + 手动
@@ -182,11 +200,12 @@ final class OverlayWindow {
         // 要能拖走，就不能完全无视鼠标。它只在听写期间出现，
         // 那期间也不会有人想点它下面的东西 —— 挪得动比点得穿重要。
         panel.ignoresMouseEvents = false
-        panel.isMovableByWindowBackground = true
+        // 关掉系统拖动：它会触发贴边分屏。拖动由 DraggableEffectView 自己做。
+        panel.isMovable = false
         // 切到别的桌面 / 全屏 App 时浮层要跟过去
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
-        let effect = NSVisualEffectView()
+        let effect = DraggableEffectView()
         effect.material = .hudWindow
         effect.blendingMode = .behindWindow
         effect.state = .active
