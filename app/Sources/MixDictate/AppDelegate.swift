@@ -71,6 +71,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 生命周期
 
+    /// 单实例检查放在这里，不放 main.swift。
+    ///
+    /// 它用的是 `NSRunningApplication`，而 AppKit 要求 `NSApplication` 先建立 ——
+    /// 原来那版在 `NSApplication.shared` 之前就调了它，属于顺序错误。
+    /// 这个回调是 AppKit 起来之后、界面搭起来之前，正好。
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if SingleInstance.shouldYield() { exit(0) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // 位置存起来，图标就不会每次启动都换地方。
