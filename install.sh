@@ -115,9 +115,30 @@ step "安装到「应用程序」"
 # 转写服务必须一起杀掉：App 退出时本该顺带关掉它，但只要有一次没关干净，
 # 新 App 启动时就会探测到这个残留服务并直接接管（那是为了避免端口冲突
 # 特意写的逻辑）—— 结果服务端代码更新了却永远不生效，而且毫无征兆。
+# 先把 launchd 里的任务卸掉。老版本的 plist 里有 KeepAlive —— App 一被杀，
+# launchd 立刻又拉起一份**旧版**；接着我们 rm -rf 把它的 bundle 抽走，
+# 最后 open 起来的新版发现"已经有一个在跑了"就自己让路。
+# 结果：更新完还是旧代码在跑，而且它的 bundle 已经没了，
+# 菜单栏图标和文字插入都会跟着出问题，却没有任何一步报错。
+AUTOSTART_PLIST="$HOME/Library/LaunchAgents/dev.mixdictate.app.plist"
+AUTOSTART_WAS_ON=false
+[ -f "$AUTOSTART_PLIST" ] && AUTOSTART_WAS_ON=true
+launchctl bootout "gui/$UID/dev.mixdictate.app" 2>/dev/null || true
+
 pkill -x "$APP_NAME" 2>/dev/null || true
 pkill -f mixdictate_server 2>/dev/null || true
-sleep 1
+
+# 等它真的退出再往下走。pkill 只是发个信号 —— 不等的话，后面的 cp 和 open
+# 全在跟一个还没死透的进程赛跑，而赛跑的结果每次都不一样。
+for _ in $(seq 1 20); do
+    pgrep -x "$APP_NAME" >/dev/null 2>&1 || break
+    sleep 0.5
+done
+if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+    printf '  旧进程 10 秒没退出，强制结束\n'
+    pkill -9 -x "$APP_NAME" 2>/dev/null || true
+    sleep 1
+fi
 
 if [ -d "$INSTALLED" ]; then
     rm -rf "$INSTALLED"
@@ -145,6 +166,23 @@ fi
 step "启动 MixDictate"
 open "$INSTALLED"
 sleep 4
+
+# 起来了没有？这一步必须查 —— 一个没有窗口的菜单栏 App 没起来和起来了
+# 长得一模一样，而"图标怎么不见了"是从这里开始的。
+if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+    printf '  已启动（菜单栏右边应该出现图标）\n'
+else
+    printf '\n⚠️  MixDictate 没能启动起来\n'
+    printf '   看一眼原因：log show --last 2m --predicate '"'"'process == "MixDictate"'"'"' | tail -30\n\n'
+fi
+
+# 开机自启的 plist 重写一遍。老版本那份带着 KeepAlive（退出后又被拉回来），
+# 上面已经把任务卸掉了，这里补回去 —— 用户开着的东西不能因为更新就没了。
+if [ "$AUTOSTART_WAS_ON" = true ]; then
+    "$ROOT/scripts/autostart.sh" install >/dev/null 2>&1 \
+        && printf '  开机自启已保留\n' \
+        || printf '  ⚠️  开机自启没能装回去，跑 ./scripts/autostart.sh install 看看原因\n'
+fi
 
 # 装完自动复查一遍那些犯过的错。**不能靠人记得去跑** —— 之前失败的
 # 那一环恰恰就是"记得去查"。清单只有自动执行才有意义。
