@@ -16,6 +16,7 @@ CONFIG="$HOME/.config/mixdictate/config.json"
 APP="/Applications/MixDictate.app"
 PORT="${MIXDICTATE_PORT:-8765}"
 IDENTITY="${MIXDICTATE_SIGN_IDENTITY:-MixDictate Dev}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 fails=0
 warns=0
@@ -161,6 +162,31 @@ if [ -f "$STATUS" ]; then
             fi
             ;;
     esac
+fi
+
+# ---------------------------------------------------------------- 开机自启
+echo
+echo "开机自启"
+# 设置界面和 autostart.sh 装的必须是同一个任务。两边各写一个 label 的话，
+# 界面上显示"没开"而系统里其实装着（或者反过来）—— 又是一个没人会报错的谎。
+script_label=""
+swift_label=""
+LOGIN_ITEM="$ROOT/app/Sources/MixDictate/LoginItem.swift"
+if [ -f "$ROOT/scripts/autostart.sh" ] && [ -f "$LOGIN_ITEM" ]; then
+    script_label="$(grep -o 'LABEL="[^"]*"' "$ROOT/scripts/autostart.sh" | head -1 | cut -d'"' -f2)"
+    swift_label="$(grep -o 'static let label = "[^"]*"' "$LOGIN_ITEM" | head -1 | cut -d'"' -f2)"
+    if [ -n "$script_label" ] && [ "$script_label" = "$swift_label" ]; then
+        pass "命令行和设置界面用的是同一个任务（${script_label}）"
+    else
+        fail "label 对不上：autostart.sh=$script_label LoginItem.swift=$swift_label"
+        fix "两边改成同一个，否则设置里的开关跟实际状态会各说各话"
+    fi
+fi
+
+if launchctl print "gui/$UID/${script_label:-dev.mixdictate.app}" >/dev/null 2>&1; then
+    pass "已开启（登录后自动拉起）"
+else
+    warn "没开 —— 重启后要自己打开一次（设置里勾「开机自动启动」，或 ./scripts/autostart.sh install）"
 fi
 
 # ---------------------------------------------------------------- 服务

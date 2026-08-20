@@ -12,6 +12,9 @@ final class SettingsModel: ObservableObject {
     /// 也可能因为重新编译（签名变了）而失效。
     @Published var hasAccessibility = TextInjector.hasAccessibilityPermission
     @Published var hasMicrophone = SettingsModel.microphoneGranted
+    /// 开机自启是系统状态，不在 config.json 里 —— 它可能被命令行
+    /// （`scripts/autostart.sh`）改掉，所以每次都问一遍 launchd。
+    @Published var launchAtLogin = LoginItem.isEnabled
 
     /// 保存后回调，让 AppDelegate 决定要不要重挂热键 / 重启服务
     var onSave: ((Config, _ modelChanged: Bool) -> Void)?
@@ -33,6 +36,29 @@ final class SettingsModel: ObservableObject {
     func refreshPermissions() {
         hasAccessibility = TextInjector.hasAccessibilityPermission
         hasMicrophone = SettingsModel.microphoneGranted
+        launchAtLogin = LoginItem.isEnabled
+    }
+
+    // MARK: - 开机自启
+
+    /// 立刻生效，不等"保存"。它改的是 launchd 里的任务，不是 config.json ——
+    /// 混进保存流程的话，保存成功了但自启没装上就看不出来。
+    ///
+    /// 失败时**把开关拨回去**并说出原因。让开关停在"开"而系统里其实没装，
+    /// 正是这个项目里最常见的那种谎。
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try LoginItem.enable()
+                statusMessage = "已开启开机自启（拉起的是 \(LoginItem.executablePath)）"
+            } else {
+                try LoginItem.disable()
+                statusMessage = "已关闭开机自启"
+            }
+        } catch {
+            statusMessage = "开机自启没改成：\(error.localizedDescription)"
+        }
+        launchAtLogin = LoginItem.isEnabled
     }
 
     // MARK: - 录制说话键
@@ -157,6 +183,24 @@ struct SettingsView: View {
                     }
                     .frame(minWidth: 140)
                     .help("点一下，然后按你想用的修饰键。听写中按 Esc 取消。")
+                }
+                .padding(6)
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("开机自动启动", isOn: Binding(
+                        get: { model.launchAtLogin },
+                        set: { model.setLaunchAtLogin($0) }
+                    ))
+                    .help("""
+                        登录后自动把 MixDictate 拉起来，它没有 Dock 图标，只在菜单栏。
+                        这一项改完立刻生效，不用点保存。
+                        命令行等价：./scripts/autostart.sh install / uninstall / status —— 改的是同一个任务。
+                        """)
+                    Text("关掉的话，每次重启都要自己打开一次（⌘+Space 搜 MixDictate）。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(6)
             }

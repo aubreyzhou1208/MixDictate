@@ -119,9 +119,15 @@ zeros. A self-signed certificate costs nothing and needs no Apple ID.
 
 ### Optional: start at login
 
+Off by default — after a reboot you open it yourself. To change that, tick
+**开机自动启动** in Settings (menu bar › 设置…); it takes effect immediately.
+Or from the shell:
+
 ```bash
 ./scripts/autostart.sh install
 ```
+
+Both touch the same launchd job, so the checkbox and the script agree.
 
 ## When something goes wrong
 

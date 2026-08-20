@@ -285,6 +285,22 @@ bash 不会这样，shellcheck 也查不出来。
 - `panel.isMovable = false`，在 `NSVisualEffectView` 子类里按鼠标位移
   自己 `setFrameOrigin`
 
+### 14. 界面上的开关反映的是「系统状态」时，不能只记在自己心里
+
+开机自启装在 launchd 里，不在 `config.json` 里。它可能被命令行
+（`scripts/autostart.sh`）改掉，也可能被用户在系统设置里删掉。所以：
+
+- 开关的值每次都**问一遍 launchd**，不缓存、不写进配置文件
+- 改完**立刻生效**，不跟着「保存」走 —— 保存成功了但自启没装上就看不出来
+- 装完**复查一遍**（`launchctl bootstrap` 返回 0 不代表任务真的在）
+- 失败就把开关**拨回去**并说出原因。开关停在「开」而系统里其实没装，
+  正是这个项目里最典型的那种谎
+- Swift 那边和脚本那边必须用**同一个 label**，`verify.sh` 会核对 ——
+  两边各写一个的话，界面和命令行会各说各话
+
+没用 `SMAppService`：它要正经开发者签名，而这个 App 是 ad-hoc 签的，
+失败时给的错误还很含糊。宁可自己写 plist，也要能把失败原因说出来。
+
 ## 每次改动后必做
 
 ```bash
