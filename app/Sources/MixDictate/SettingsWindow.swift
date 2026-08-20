@@ -187,23 +187,7 @@ struct SettingsView: View {
                 .padding(6)
             }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("开机自动启动", isOn: Binding(
-                        get: { model.launchAtLogin },
-                        set: { model.setLaunchAtLogin($0) }
-                    ))
-                    .help("""
-                        登录后自动把 MixDictate 拉起来，它没有 Dock 图标，只在菜单栏。
-                        这一项改完立刻生效，不用点保存。
-                        命令行等价：./scripts/autostart.sh install / uninstall / status —— 改的是同一个任务。
-                        """)
-                    Text("关掉的话，每次重启都要自己打开一次（⌘+Space 搜 MixDictate）。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(6)
-            }
+            launchAtLoginBox
 
             permissionsBox
 
@@ -302,6 +286,41 @@ struct SettingsView: View {
                 }
                 .help("换模型后会自动重启转写服务，第一次要下载模型。")
             }
+        }
+    }
+
+    /// 开机自启。这一栏要把"开着会怎样、关着会怎样"都写出来 ——
+    /// 只写一句"开机自动启动"的话，关着的人不知道下次重启后该怎么把它找回来。
+    @ViewBuilder
+    private var launchAtLoginBox: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("开机自动启动", isOn: Binding(
+                    get: { model.launchAtLogin },
+                    set: { model.setLaunchAtLogin($0) }
+                ))
+                .help("""
+                    这一项改完立刻生效，不用点保存 —— 它改的是系统里的登录项，不是配置文件。
+                    命令行等价：./scripts/autostart.sh install / uninstall / status，改的是同一个任务。
+                    """)
+
+                Text(model.launchAtLogin
+                     ? "开着：登录后它自己起来，你什么都不用按。菜单栏图标会晚几秒出现 —— 那几秒在加载模型。"
+                     : "关着：每次重启后要自己打开一次 —— 按 ⌘+Space 打开聚焦搜索，输入 MixDictate，回车。"
+                     + "（⌘+Space 是 macOS 的搜索框，不是 MixDictate 的快捷键。）")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("跟「按住说话」那个键无关：说话键是录音用的，这里管的是 App 本身开不开。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // 不写这一句的话，这一栏会缩到刚好包住文字，比上下其他几栏窄一截。
+            // 别的栏里都有 Spacer 或者 maxWidth: .infinity 把宽度撑满。
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
         }
     }
 
