@@ -327,9 +327,11 @@ enum TextInjector {
         ) == .success, let element = focused,
               CFGetTypeID(element) == AXUIElementGetTypeID()
         else { return nil }
-        let focused = element as! AXUIElement
-        AXUIElementSetMessagingTimeout(focused, axTimeout)
-        return focused
+        let target = element as! AXUIElement
+        // 具体那个控件也要单独设一次 —— 超时是按元素记的，
+        // 只给 system-wide 设不管用
+        AXUIElementSetMessagingTimeout(target, axTimeout)
+        return target
     }
 
     static func copyToPasteboard(_ text: String) {
