@@ -30,6 +30,7 @@ usage() {
   showLiveOverlay     true / false   录音时显示浮层
   overlayOpacity      0.2…1          浮层不透明度（默认 0.75；位置直接用鼠标拖，会自动记住）
   alwaysCopy          true / false   每次听写完都复制到剪贴板（默认开）
+  menuBarLabel        true / false   菜单栏图标旁边显示「MIX」字样（默认关，用来确认图标在不在）
   insertionMethod     paste / typing 输入方式
   pushToTalkKeyCode   61=右Option 58=左Option 54=右Command 62=右Control
   model               Qwen/Qwen3-ASR-0.6B 或 Qwen/Qwen3-ASR-1.7B

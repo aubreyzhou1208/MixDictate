@@ -153,6 +153,13 @@ struct Config {
     /// 代价见设置界面里的说明 —— 默认关闭。
     var liveInsertion: Bool = false
 
+    /// 菜单栏图标旁边额外显示「MIX」几个字。
+    ///
+    /// 默认关，它是给"图标到底在不在菜单栏上"这个问题准备的：图标可能
+    /// 因为各种原因画不出来，而**文字画不出来的可能性小得多**。菜单栏上
+    /// 出现 MIX 就说明这一项拿到了槽位，什么都没有就说明它压根不在。
+    var menuBarLabel: Bool = false
+
     /// 每次听写完都把完整结果留在剪贴板上。
     ///
     /// 默认开：文字插错地方、插不进去、或者用户中途点走了，都是"整段话没了"，
@@ -258,6 +265,8 @@ extension Config: Codable {
             ?? fallback.fullPassMaxSeconds
         liveInsertion = try c.decodeIfPresent(Bool.self, forKey: .liveInsertion)
             ?? fallback.liveInsertion
+        menuBarLabel = try c.decodeIfPresent(Bool.self, forKey: .menuBarLabel)
+            ?? fallback.menuBarLabel
         alwaysCopy = try c.decodeIfPresent(Bool.self, forKey: .alwaysCopy)
             ?? fallback.alwaysCopy
         insertionMethod = try c.decodeIfPresent(String.self, forKey: .insertionMethod)

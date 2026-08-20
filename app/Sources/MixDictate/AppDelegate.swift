@@ -292,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             installHotKeyMonitor()
         }
         buildMenu()
+        refreshStatusItem()
         applyOverlayAppearance()
         NSLog("MixDictate: 配置已重新加载")
 
@@ -1279,7 +1280,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let image = statusImage {
             button.image = image
-            button.title = ""
+            // 文字标签：给"它到底在不在菜单栏上"当探针。图标画不出来的
+            // 原因有一堆（模板渲染、符号缺失、尺寸算错），文字少得多。
+            button.title = config.menuBarLabel ? " MIX" : ""
+            button.imagePosition = config.menuBarLabel ? .imageLeading : .imageOnly
         } else {
             // SF Symbol 拿不到时退回 emoji，至少菜单栏上还有个能点的东西
             button.image = nil
