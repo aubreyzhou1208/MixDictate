@@ -73,6 +73,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 位置存起来，图标就不会每次启动都换地方。
+        statusItem.autosaveName = "MixDictateStatusItem"
+        // **必须显式设成可见。** 按住 Command 把菜单栏图标拖出去，macOS 会把
+        // "隐藏"记进偏好设置里，以后每次启动都不再显示 —— 而这个 App 只有
+        // 菜单栏这一个入口，图标没了就等于整个 App 打不开，偏偏它还在正常跑：
+        // 热键有反应、字也能插进去，只是看不见。又是一次没人会报错的失败。
+        statusItem.isVisible = true
         buildMenu()
         refreshStatusItem()
 
@@ -152,6 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "lastCapturePeak": lastCapturePeak,
             "lastStartLatencyMs": lastStartLatencyMs,
             "lastGatedSeconds": lastGatedSeconds,
+            // 图标看不见的时候，这是唯一能从终端问出真相的地方
+            "menuBarVisible": statusItem?.isVisible ?? false,
             "state": String(describing: state),
             "lastError": lastError ?? "",
             "appPath": Bundle.main.bundleURL.path,
