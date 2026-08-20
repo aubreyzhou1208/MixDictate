@@ -233,6 +233,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "menuBarHasButton": statusItem?.button != nil,
             "menuBarPlaced": statusItem?.button?.window != nil,
             "menuBarWidth": statusItem?.button?.frame.width ?? -1,
+            // 图标"在菜单栏上占着 31 点宽却看不见"时，剩下的问题只可能是
+            // 它被放到哪儿了 —— 刘海底下、或者干脆在屏幕外。位置由
+            // autosaveName 对应的 preferred position 决定，那是存在偏好里的，
+            // 会跨重启留着。没有这两个数就只能靠猜。
+            "menuBarX": statusItem?.button?.window?.frame.origin.x ?? -1,
+            "menuBarY": statusItem?.button?.window?.frame.origin.y ?? -1,
+            "screenWidth": NSScreen.main?.frame.width ?? -1,
+            "screenCount": NSScreen.screens.count,
             "menuBarImageOK": statusImage != nil,
             "state": String(describing: state),
             "lastError": lastError ?? "",
