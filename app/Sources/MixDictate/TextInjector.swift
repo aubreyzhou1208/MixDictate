@@ -308,15 +308,28 @@ enum TextInjector {
         return readRange(location: caret - count, length: count)
     }
 
+    /// 跨进程问辅助功能接口最多等这么久。
+    ///
+    /// 这些调用是**同步的跨进程 IPC**：目标 App 一忙或者干脆不响应，
+    /// 调用方就一直等下去。默认超时是好几秒，而我们是在主线程上、
+    /// 在每次要退格之前调它 —— 结果就是整个 App 冻住，浮层卡在"整理中"。
+    ///
+    /// 0.15 秒够正常的 App 回一次话；不回话的，就当"读不到"处理，
+    /// 走没法核对那条路。**宁可核对不了，也不能把界面卡死。**
+    private static let axTimeout: Float = 0.15
+
     private static func focusedElement() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, axTimeout)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             system, kAXFocusedUIElementAttribute as CFString, &focused
         ) == .success, let element = focused,
               CFGetTypeID(element) == AXUIElementGetTypeID()
         else { return nil }
-        return (element as! AXUIElement)
+        let focused = element as! AXUIElement
+        AXUIElementSetMessagingTimeout(focused, axTimeout)
+        return focused
     }
 
     static func copyToPasteboard(_ text: String) {

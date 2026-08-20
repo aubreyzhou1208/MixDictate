@@ -207,11 +207,18 @@ struct SettingsView: View {
             }
 
             section("输入方式", "怎么把文字送进输入框") {
-                Toggle("边说边写进输入框", isOn: $model.config.liveInsertion)
+                Toggle("边说边写进输入框（准确率不如关着）", isOn: $model.config.liveInsertion)
                     .help("""
-                        开启后文字直接出现在光标处，不用等松手，也不再多一次粘贴。
-                        代价：模型会边说边修正前面的词，所以你会看到文字被退删重写；而且听写过程中别自己动光标或改字，否则退删会误伤你的内容。
+                        默认关闭，**追求准确就一直关着**。
+
+                        关着的时候：松手后一次性插入，中间不改动任何东西，最稳。
+                        开着的时候：文字边说边出现，但模型会不断回头修正前面的词，所以要靠退格重写来跟上。而"输入框里现在是什么"我们只能靠推算，一旦跟真实情况对不上（事件被丢、你自己动了光标、App 自动补全），就可能改错地方。
+
+                        它现在会在退格前先核对，对不上就停手、把完整文字放进剪贴板 —— 但那意味着这一次的实时写入没做完。
                         """)
+                Text("追求准确率就关掉它：关着是松手后一次性插入，中间不改动任何东西。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Picker("送进去的方式", selection: $model.config.insertionMethod) {
                     ForEach(InsertionMethod.allCases, id: \.rawValue) { option in

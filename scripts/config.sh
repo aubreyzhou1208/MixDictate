@@ -26,7 +26,7 @@ usage() {
   maxPauseSeconds     秒             送给模型前把长停顿压到这么短（默认 0.35，0=不压）
                                      停顿时老是被自动加句号就调小
   rawOutput           true / false   只要模型原文，不做任何加工（排查"输出很怪"用）
-  liveInsertion       true / false   边说边写进输入框（不用等松手，也没有粘贴那一步）
+  liveInsertion       true / false   边说边写进输入框（默认关；**追求准确率就别开**）
   showLiveOverlay     true / false   录音时显示浮层
   overlayOpacity      0.2…1          浮层不透明度（默认 0.75；位置直接用鼠标拖，会自动记住）
   insertionMethod     paste / typing 输入方式
