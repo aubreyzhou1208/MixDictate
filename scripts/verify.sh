@@ -247,7 +247,9 @@ fi
 
 # 同时开着两个的话：两套热键监听、两个转写服务抢同一个端口，
 # 表现成"按键有时候没反应"，而两个菜单栏图标长得一模一样，看不出来。
-running_count="$(pgrep -fc '/MixDictate.app/Contents/MacOS/MixDictate' 2>/dev/null || echo 0)"
+# 用 wc -l 而不是 pgrep -fc：后者没匹配到时会「打印 0」并且「退出码 1」，
+# 于是 || echo 0 又补一个 0，变量成了两行，数值比较当场报错。
+running_count="$(pgrep -f '/MixDictate.app/Contents/MacOS/MixDictate' 2>/dev/null | wc -l | tr -d ' ')"
 if [ "${running_count:-0}" -gt 1 ]; then
     fail "同时跑着 $running_count 个 MixDictate"
     fix "pkill -f MixDictate 之后重开一个（新版启动时会自己挡掉重复的）"

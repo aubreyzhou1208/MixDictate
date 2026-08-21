@@ -168,7 +168,10 @@ fi
 
 section "转写记录"
 if [ -f "$LOGS/transcripts.log" ]; then
-    echo "共 $(grep -c '^  原始:' "$LOGS/transcripts.log" 2>/dev/null || echo 0) 条"
+    # grep -c 跟 pgrep -fc 一样：没匹配到时打印 0 但退出码非 0，
+    # 再 || echo 0 就会输出两行。
+    transcript_count="$(grep -c '^  原始:' "$LOGS/transcripts.log" 2>/dev/null || true)"
+    echo "共 ${transcript_count:-0} 条"
     echo "最后 3 条："
     tail -n 12 "$LOGS/transcripts.log"
 else
