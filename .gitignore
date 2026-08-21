@@ -35,6 +35,3 @@ config/hotwords.local.txt
 
 # macOS
 .DS_Store
-
-# 本地给编辑器/助手看的备忘，不进仓库
-CLAUDE.md
