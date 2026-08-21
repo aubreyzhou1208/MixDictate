@@ -34,6 +34,9 @@ TRANSCRIPTS="$HOME/Library/Application Support/MixDictate/logs/transcripts.log"
 PENDING="$LOG_DIR/pending_update"
 # 最多推迟这么久。超过就不再等空闲了。
 MAX_DEFER=600
+SUPPORT="$HOME/Library/Application Support/MixDictate"
+# install.sh 失败之后重试的节流点。装不上是装不上，每分钟试一遍只会刷屏。
+RETRY_MARK="$LOG_DIR/install_retry"
 
 say() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1"; }
 
@@ -84,6 +87,31 @@ do_run() {
     # 没有变化时什么都不记 —— 每分钟写一行"已是最新"只会把日志淹掉，
     # 真正出问题的那几行反而找不着
     if [ "$local_sha" = "$remote_sha" ]; then
+        # **但"仓库到位"不等于"App 到位"。**
+        #
+        # 上面那个快进是先做的，install.sh 是后做的。install.sh 一失败，
+        # git 已经停在新提交上了 —— 下一轮进到这里，sha 相同，直接返回，
+        # 于是失败被自己盖住：仓库说"已是最新"，用户用的还是旧版本，
+        # 而且没有任何一处会再提起这件事。真撞上过（launchd 的 PATH 里
+        # 只有系统自带的 Python 3.9，install.sh 的版本检查过不去）。
+        installed_sha="$(cat "$SUPPORT/installed_sha" 2>/dev/null || true)"
+        if [ -n "$installed_sha" ] && [ "$installed_sha" != "$local_sha" ]; then
+            local last_try now
+            last_try="$(cat "$RETRY_MARK" 2>/dev/null || echo 0)"
+            now="$(date +%s)"
+            # 十分钟重试一次就够。装不上是装不上，每分钟试一遍只会刷屏。
+            if [ "$(( now - last_try ))" -ge 600 ] && ! recently_used; then
+                printf '%s\n' "$now" > "$RETRY_MARK"
+                say "仓库已经是 ${local_sha:0:7}，但装着的 App 还停在 ${installed_sha:0:7} —— 重装一次"
+                if ./install.sh; then
+                    say "重装成功：${local_sha:0:7}"
+                    notify "已装上 ${local_sha:0:7}"
+                else
+                    say "重装还是失败，App 停在 ${installed_sha:0:7}"
+                    notify "更新装不上，App 还是旧版本 —— 跑 ./scripts/verify.sh 看原因"
+                fi
+            fi
+        fi
         return 0
     fi
 

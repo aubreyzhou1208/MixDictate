@@ -299,6 +299,18 @@ if [ -f "$autoupdate_plist" ]; then
     fi
 fi
 
+# 「仓库更到了新提交」和「App 换成了新版本」是两件事。自动更新先快进 git、
+# 再跑 install.sh，install.sh 一失败这两件事就永久错开 —— 而且下一轮因为
+# 本地和远端 sha 相同直接返回，失败被自己盖住。这里把它挖出来。
+installed_sha="$(cat "$SUPPORT/installed_sha" 2>/dev/null || true)"
+head_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$installed_sha" ] && [ -n "$head_sha" ] && [ "$installed_sha" != "$head_sha" ]; then
+    echo
+    echo "版本"
+    fail "仓库在 $(echo "$head_sha" | cut -c1-7)，但装着的 App 是 $(echo "$installed_sha" | cut -c1-7) —— 上次安装没成功"
+    fix "./install.sh 重装一次，看它停在哪一步"
+fi
+
 # ---------------------------------------------------------------- 服务
 echo
 echo "转写服务"

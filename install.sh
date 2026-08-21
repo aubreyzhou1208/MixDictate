@@ -43,23 +43,52 @@ if ! xcode-select -p >/dev/null 2>&1 || ! command -v swift >/dev/null; then
     exit 1
 fi
 
-if ! command -v python3 >/dev/null; then
-    die "找不到 python3。先装 Homebrew（https://brew.sh），再跑：brew install python@3.12"
-fi
+# 找一个够新的 python3。**不能只信 PATH 里的那个。**
+#
+# launchd 起的进程拿到的 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+# 而那里的 python3 是系统自带的 3.9 —— 于是自动更新每次都倒在这一步，
+# 在终端里手动跑却一切正常（终端的 PATH 里有 Homebrew / conda 的新版本）。
+#
+# 真的发生过，而且后果很隐蔽：仓库被快进到了新提交，App 却停在旧版本，
+# git 那边看"已是最新"，用户用的还是旧的，两边都不报错。
+py_ok() {
+    [ -x "$1" ] && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
+        2>/dev/null
+}
+
+find_python() {
+    # 已经建好的 venv 排第一：它就是当初挑对了版本的那个，
+    # 而且这时候根本不需要系统里再有一个 python3。
+    if py_ok "$VENV/bin/python"; then
+        printf '%s\n' "$VENV/bin/python"
+        return 0
+    fi
+    for candidate in python3 python3.13 python3.12 python3.11 python3.10 \
+        /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+        resolved="$(command -v "$candidate" 2>/dev/null || true)"
+        [ -n "$resolved" ] || continue
+        if py_ok "$resolved"; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # 版本不够的话必须现在说清楚。等到 pip 装 mlx-qwen3-asr 时才失败，
 # 报错会淹没在一大堆依赖解析的输出里，看不出真正的原因。
-py_ok="$(python3 -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)' 2>/dev/null || echo 0)"
-if [ "$py_ok" != "1" ]; then
+PYTHON="$(find_python || true)"
+if [ -z "$PYTHON" ]; then
     printf '\n'
-    printf 'Python 版本太老：%s\n' "$(python3 --version 2>&1)"
-    printf '需要 3.10 或更新。装一个新的：\n\n'
+    printf '找不到 3.10 或更新的 Python。\n'
+    printf 'PATH 里的是：%s\n\n' "$(python3 --version 2>&1 || echo '（没有 python3）')"
+    printf '装一个：\n\n'
     printf '  brew install python@3.12\n\n'
     printf '装完再跑一次 ./install.sh。\n'
     exit 1
 fi
 
-echo "macOS $(sw_vers -productVersion) · $(uname -m) · $(python3 --version)"
+echo "macOS $(sw_vers -productVersion) · $(uname -m) · $("$PYTHON" --version) （${PYTHON}）"
 
 # ---------------------------------------------------------------- Python 环境
 
@@ -71,7 +100,7 @@ step "准备 Python 环境（${VENV}）"
 
 mkdir -p "$SUPPORT"
 if [ ! -x "$VENV/bin/python" ]; then
-    python3 -m venv "$VENV"
+    "$PYTHON" -m venv "$VENV"
 fi
 
 "$VENV/bin/python" -m pip install --upgrade pip --quiet
@@ -159,6 +188,17 @@ if [ -f "$STAMP" ] && [ -n "$NEW_HASH" ] && [ "$NEW_HASH" != "$(cat "$STAMP")" ]
     printf '   要是听写说「没有听到声音」，跑：./scripts/permissions.sh reset\n\n'
 fi
 [ -n "$NEW_HASH" ] && printf '%s' "$NEW_HASH" > "$STAMP"
+
+# 记下这次装进去的是哪个提交。
+#
+# 「仓库更到了新提交」和「App 换成了新版本」是两件事，而它们会永久错开：
+# 自动更新先快进 git、再跑 install.sh，install.sh 一失败，git 那边已经是
+# 最新了 —— 下一轮因为本地和远端 sha 相同直接返回，**失败被自己盖住**。
+# 表现是仓库说"已是最新"，用户用的还是旧版本，两边都不报错。
+# 有了这个戳，autoupdate.sh 会重试，verify.sh 也能一眼看出来。
+if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1; then
+    git -C "$ROOT" rev-parse HEAD > "$SUPPORT/installed_sha"
+fi
 
 # 装完直接启动。不只是省一步 —— macOS 只有在 App 主动请求辅助功能权限时
 # 才会把它加进「隐私与安全性 › 辅助功能」的列表里。App 没跑过，用户去那个
