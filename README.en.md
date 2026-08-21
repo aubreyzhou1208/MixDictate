@@ -138,7 +138,7 @@ Both touch the same launchd job, so the checkbox and the script agree.
 
 `verify.sh` checks for the specific failures this project has actually hit, and
 `install.sh` runs it automatically after every install. Every entry corresponds
-to a lesson recorded in [`CLAUDE.md`](CLAUDE.md).
+to a lesson recorded in [`docs/pitfalls.md`](docs/pitfalls.md).
 
 | Symptom | Usually |
 |---|---|

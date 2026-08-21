@@ -91,7 +91,7 @@ def test_symbol_words_in_chinese_context_are_preserved():
 
 
 def test_at_before_latin():
-    assert convert_symbols("艾特 claude") == "@claude"
+    assert convert_symbols("艾特 gmail") == "@gmail"
 
 
 def test_longest_spoken_form_wins():

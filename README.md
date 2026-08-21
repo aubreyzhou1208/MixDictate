@@ -165,7 +165,7 @@ git clone https://github.com/aubreyzhou1208/MixDictate.git ~/MixDictate && cd ~/
 
 它逐条查那些**已经犯过的错**有没有重新出现：权限是不是真的有效、采集是不是
 全零、回声消除有没有被打开、签名身份是不是固定的、服务和模型在不在。
-每一条都对应 `CLAUDE.md` 里记着的一个具体教训。
+每一条都对应 [`docs/pitfalls.md`](docs/pitfalls.md) 里记着的一个具体教训。
 
 `install.sh` 装完会自己跑一遍，自动更新装完也会跑，有回归弹通知。
 **这是刻意做成自动的** —— 之前真正失败的那一环从来不是"不知道要查什么"，
