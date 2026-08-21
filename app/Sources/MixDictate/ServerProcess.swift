@@ -44,6 +44,15 @@ final class ServerProcess {
     // MARK: - 启动
 
     func start() async -> Status {
+        // 刚被我们 SIGTERM 掉的那个可能还在，先等它咽气。
+        //
+        // 不等的话「重启转写服务」会这样收场：stop() 发完信号立刻返回，
+        // 下面那句 isHealthy() 问到的还是那个将死的进程 —— 它答"我好着呢"，
+        // 于是我们判定"已经有服务在跑"，把它认作别人的服务（isOwned = false）
+        // 就不再启动新的。几百毫秒后它死了，**一个服务都不剩，而 App
+        // 显示一切正常**。用户点了"重启"，得到的是"没有"。
+        await waitForOldProcessToExit()
+
         // 已经有服务在跑就直接用，别启第二个
         if await isHealthy() {
             isOwned = false
@@ -121,10 +130,35 @@ final class ServerProcess {
         guard isOwned, let process, process.isRunning else { return }
 
         process.terminate()  // SIGTERM，让 uvicorn 正常收尾
+        // 留着这个引用，下一次 start() 要等它真的走 —— 见 start() 里的说明。
+        // 不能在这里同步等：这个方法是在主线程上调的，等下去界面就冻住了。
+        terminating = process
         self.process = nil
 
         try? logHandle?.close()
         logHandle = nil
+    }
+
+    /// 上一次被我们 SIGTERM 掉、还没确认死掉的那个进程。
+    private var terminating: Process?
+
+    /// 等旧进程退出，最多 3 秒，到点就 SIGKILL。
+    ///
+    /// 等不到还硬起新的话，两个进程会抢同一个端口 —— 而抢输的那个
+    /// 只在日志里留一行，界面上完全看不出来。
+    private func waitForOldProcessToExit() async {
+        guard let old = terminating else { return }
+        defer { terminating = nil }
+
+        for _ in 0..<30 {
+            guard old.isRunning else { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if old.isRunning {
+            NSLog("MixDictate: 转写服务 3 秒没退出，强制结束")
+            kill(old.processIdentifier, SIGKILL)
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
     }
 
     // MARK: - 健康检查

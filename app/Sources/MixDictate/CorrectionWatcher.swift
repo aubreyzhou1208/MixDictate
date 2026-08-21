@@ -45,20 +45,43 @@ final class CorrectionWatcher {
         cancel()
         guard config.learnCorrections, !text.isEmpty else { return }
 
-        // 插入点在光标之前，所以起点 = 当前光标 - 插入长度
-        guard let caret = TextInjector.caretOffset() else { return }
-        let start = caret - text.count
-        guard start >= 0 else { return }
-
-        inserted = text
-        location = start
-
         task = Task { @MainActor [weak self] in
+            // **先等插入真的落地，再去读光标。**
+            //
+            // TextInjector.insert() 是异步的：粘贴那条路要先等 60 毫秒让
+            // 修饰键状态落定才发 Cmd+V，逐字输入更是整批排在后台队列上
+            // 一个字一个字地发。原来这里在调用它之后**立刻**读光标，
+            // 读到的是插入**之前**的位置，于是 `caret - text.count`
+            // 整整偏掉一段文字的长度：
+            //
+            //   · 输入框本来是空的（最常见）→ 起点算成负数，直接放弃，
+            //     这个功能从来就没生效过
+            //   · 输入框本来有字 → 去比对一段根本不是我们写的文字，
+            //     然后把用户本来就在那儿的内容当成"他做的修改"学走
+            //
+            // 后面本来就要等 6 秒，这里多等一下不花什么。
+            try? await Task.sleep(
+                nanoseconds: UInt64(Self.settleSeconds(for: text) * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+
+            // 插入点在光标之前，所以起点 = 当前光标 - 插入长度
+            guard let caret = TextInjector.caretOffset() else { return }
+            let start = caret - text.count
+            guard start >= 0 else { return }
+            self.inserted = text
+            self.location = start
+
             // 等一会儿再看。改字要时间，读太早只会看到原样。
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             guard !Task.isCancelled else { return }
-            self?.checkForCorrection()
+            self.checkForCorrection()
         }
+    }
+
+    /// 等多久算"插入已经落地"。逐字输入是一个字一个字发的，
+    /// 长文本要按长度多给一点。
+    private static func settleSeconds(for text: String) -> Double {
+        min(3, 0.5 + Double(text.count) * 0.0015)
     }
 
     func cancel() {

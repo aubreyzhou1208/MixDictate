@@ -62,7 +62,19 @@ final class LiveInserter {
             shared += 1
         }
 
-        let deletions = min(old.count - shared, maxDeletions)
+        let deletions = old.count - shared
+
+        // 要删的比一次能安全删的还多。
+        //
+        // 原来这里是 `min(needed, maxDeletions)` —— 截断着删，然后照样
+        // 把记忆记成"已经改完了"。那正是这个类要防的事：输入框里还留着
+        // 没删掉的一截，而我们以为它跟 text 一模一样，之后每一次改写都
+        // 建立在这份错的记忆上，越改越歪。**宁可停手，也不能记错。**
+        if deletions > maxDeletions {
+            trusted = false
+            onUntrusted?()
+            return
+        }
 
         if deletions > 0, !canSafelyDelete(deletions, expecting: old) {
             trusted = false

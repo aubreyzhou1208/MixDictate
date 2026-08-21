@@ -66,8 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var state: State = .launching {
-        didSet { refreshStatusItem() }
+        didSet {
+            refreshStatusItem()
+            // 回到空闲 = 这一轮的界面腾出来了，欠着的话现在能说了
+            if state == .idle { showDeferredNoticeIfAny() }
+        }
     }
+
+    /// 上一段没能插进输入框、只进了剪贴板时欠用户的那句说明。
+    /// 当时不能说 —— 浮层正被新的一段占着。
+    private var deferredNotice: String?
 
     // MARK: - 生命周期
 
@@ -81,16 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // 位置存起来，图标就不会每次启动都换地方。
-        statusItem.autosaveName = "MixDictateStatusItem"
-        // **必须显式设成可见。** 按住 Command 把菜单栏图标拖出去，macOS 会把
-        // "隐藏"记进偏好设置里，以后每次启动都不再显示 —— 而这个 App 只有
-        // 菜单栏这一个入口，图标没了就等于整个 App 打不开，偏偏它还在正常跑：
-        // 热键有反应、字也能插进去，只是看不见。又是一次没人会报错的失败。
-        statusItem.isVisible = true
-        buildMenu()
-        refreshStatusItem()
+        makeStatusItem()
         verifyStatusItemPlaced()
 
         requestMicrophoneAccess()
@@ -137,17 +136,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 图标建出来了不等于它真的在菜单栏上。`isVisible` 只是我们提的要求，
-    /// 而 button 为 nil、或者 button 没有 window，都表示系统压根没给它位置 ——
-    /// 这两种情况下 `isVisible` 仍然是 true，从外面看跟正常的一模一样。
+    // MARK: - 菜单栏项：建出来 ≠ 放上去
+
+    /// 菜单栏项的 autosave 名字里带一个序号。
     ///
-    /// 所以过两秒回头核对一次，没放上去就整个重建一遍。菜单栏是这个 App
-    /// 唯一的图形入口，重建的代价远小于"用户打不开它"。
+    /// 序号不是为了好看 —— 它是我们唯一能从 macOS 26 的「隐藏名单」里
+    /// 走出来的办法，见 `rescueStatusItem`。存在 UserDefaults 里而不是
+    /// config.json 里：这是 AppKit 自己那套 autosave 的配套物，不是给
+    /// 用户调的旋钮，放进配置文件只会让人以为它该被改。
+    private static let menuBarSlotKey = "MixDictateMenuBarSlot"
+
+    private var menuBarSlot: Int {
+        get { UserDefaults.standard.integer(forKey: Self.menuBarSlotKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.menuBarSlotKey) }
+    }
+
+    private var menuBarAutosaveName: String { "MixDictateMenuBar\(menuBarSlot)" }
+
+    /// 菜单栏项被系统隐藏时，重建了几次才回来。写进状态文件 ——
+    /// 这件事原来完全不可见。
+    private var menuBarRescues = 0
+
+    private func makeStatusItem() {
+        if let old = statusItem {
+            NSStatusBar.system.removeStatusItem(old)
+        }
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 位置存起来，图标就不会每次启动都换地方。
+        statusItem.autosaveName = menuBarAutosaveName
+        // **必须显式设成可见。** 按住 Command 把菜单栏图标拖出去，macOS 会把
+        // "隐藏"记进偏好设置里，以后每次启动都不再显示 —— 而这个 App 只有
+        // 菜单栏这一个入口，图标没了就等于整个 App 打不开，偏偏它还在正常跑：
+        // 热键有反应、字也能插进去，只是看不见。又是一次没人会报错的失败。
+        //
+        // 但这行只是"我们提的要求"，不是结果 —— 系统完全可以不理它，
+        // 而且不会报错。真相只能问几何位置，见 statusItemOnScreen。
+        statusItem.isVisible = true
+        buildMenu()
+        refreshStatusItem()
+    }
+
+    /// 菜单栏项到底有没有被放到菜单栏上。
+    ///
+    /// **`isVisible`、`button != nil`、`button.window != nil` 三个都会骗人。**
+    /// 被系统隐藏的项：button 有、window 有、`isVisible` 照样是 true ——
+    /// 只有那个 window 被停在了屏幕外面 `(0, -22)`。测出来的：把一个项
+    /// 显式设成 `isVisible = false`，它的 window 就正好是这个位置和尺寸。
+    ///
+    /// 所以唯一说实话的是几何位置：真的被放上去了，window 就落在某块屏幕
+    /// 顶上那条菜单栏里。
+    private var statusItemOnScreen: Bool {
+        guard let frame = statusItem?.button?.window?.frame, frame.width > 0 else {
+            return false
+        }
+        let screens = NSScreen.screens
+        // 一块屏幕都问不到的时候（切换显示器、合盖）不下结论。
+        // 这里判错的代价是白重建一次图标，而"没屏幕"本来就不是它的错。
+        guard !screens.isEmpty else { return true }
+
+        return screens.contains { screen in
+            // 贴着某块屏幕的顶边 = 在菜单栏里。
+            //
+            // 只往下设门槛，不往上设：菜单栏自动隐藏（全屏时）会把这一条
+            // 整个往上挪出视野，那时窗口在屏幕顶边**上方** —— 那是正常的，
+            // 不能当成失败去重建。被系统隐藏的项则是被停到 y = -22，
+            // 也就是屏幕底边下面，跟顶边差着整整一屏。
+            frame.maxY >= screen.frame.maxY - (frame.height + 4)
+                && frame.maxX > screen.frame.minX
+                && frame.minX < screen.frame.maxX
+        }
+    }
+
+    /// 图标建出来了不等于它真的在菜单栏上，所以过两秒回头核对一次。
+    ///
+    /// 没放上去分两种：一种是暂时的（状态栏服务还没准备好），重建一次就好；
+    /// 另一种是 macOS 26 的 Control Center 把这一项记进了**隐藏名单**
+    /// （日志里是 `Starting to track blocked host`）—— 那种情况下重建多少次
+    /// 都一样，因为名单认的是 `bundle id + autosaveName` 这个组合。
+    /// 换一个 autosaveName 就是一个它没见过的组合，于是能重新放上去。
+    ///
+    /// 菜单栏是这个 App 唯一的图形入口，重建的代价远小于"用户打不开它"。
     private func verifyStatusItemPlaced(attempt: Int = 0) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self else { return }
-            if statusItem?.button?.window != nil {
-                if attempt > 0 { NSLog("MixDictate: 菜单栏图标重建成功") }
+            if statusItemOnScreen {
+                if attempt > 0 {
+                    NSLog("MixDictate: 菜单栏图标回来了（重建 \(attempt) 次，名字 \(menuBarAutosaveName)）")
+                }
                 writeStatusFile()
                 return
             }
@@ -157,21 +232,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Dock 图标丑一点，但点得到 —— 而点不到的 App 等于没装。
                 // 点 Dock 图标会走 applicationShouldHandleReopen，弹出设置窗口。
                 NSApp.setActivationPolicy(.regular)
+                announceMenuBarFallback()
                 writeStatusFile()
                 return
             }
-            NSLog("MixDictate: 菜单栏图标没被放进菜单栏，重建（第 \(attempt + 1) 次）")
-            if let old = statusItem {
-                NSStatusBar.system.removeStatusItem(old)
-            }
-            statusItem = NSStatusBar.system.statusItem(
-                withLength: NSStatusItem.variableLength)
-            statusItem.autosaveName = "MixDictateStatusItem"
-            statusItem.isVisible = true
-            buildMenu()
-            refreshStatusItem()
+            rescueStatusItem(attempt: attempt)
             verifyStatusItemPlaced(attempt: attempt + 1)
         }
+    }
+
+    /// 重建菜单栏项。第一次用原来的名字（可能只是一次抽风），再不行就换名字。
+    ///
+    /// 换名字不是随便试出来的花招：Control Center 的隐藏名单按
+    /// `bundle id + autosaveName` 记账，用一个新组合出现，它会把原来那条
+    /// 记录改挂到新组合上并放行 —— 实测换过一次之后，连旧名字都跟着解禁了。
+    ///
+    /// 这等于**不尊重"用户把图标拖出菜单栏"这条记录**，是故意的：
+    /// 可有可无的图标可以尊重它，唯一入口不行。真想让它消失，
+    /// 菜单里有「退出」。
+    private func rescueStatusItem(attempt: Int) {
+        if attempt == 0 {
+            NSLog("MixDictate: 菜单栏图标没被放进菜单栏（window 停在屏幕外），原样重建一次")
+        } else {
+            menuBarSlot += 1
+            menuBarRescues += 1
+            NSLog("""
+                MixDictate: 菜单栏图标还是放不上去 —— 系统把它列进了隐藏名单。\
+                换个名字重建：\(menuBarAutosaveName)
+                """)
+        }
+        makeStatusItem()
+    }
+
+    /// 连换名字都救不回来时，得让用户知道发生了什么。
+    /// 图标不见了本身是无声的，用户只会以为 App 挂了。
+    private func announceMenuBarFallback() {
+        overlay.show(style: .compact, status: "菜单栏图标被系统隐藏")
+        overlay.update(
+            "已经在 Dock 里放了一个图标，点它可以打开设置。听写照常能用。",
+            isFinal: true
+        )
+        overlay.hide(after: 8)
     }
 
     /// 再次打开 App（Spotlight、Finder 双击、`open -a MixDictate`）时会走到这里 ——
@@ -186,6 +287,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) -> Bool {
         statusItem?.isVisible = true
         refreshStatusItem()
+        // 用户会在图标不见的时候来点这里，所以顺手再抢救一次 ——
+        // 光把 isVisible 设成 true 是没用的，被隐藏名单挡住的项照样是 true。
+        if !statusItemOnScreen {
+            rescueStatusItem(attempt: 1)
+            verifyStatusItemPlaced()
+        }
         // 菜单栏 App 平时不在前台，不主动激活的话设置窗口会开在别人后面 ——
         // 那跟没开一样。
         NSApp.activate(ignoringOtherApps: true)
@@ -226,12 +333,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "lastStartLatencyMs": lastStartLatencyMs,
             "lastGatedSeconds": lastGatedSeconds,
             // 图标看不见的时候，这是唯一能从终端问出真相的地方。
-            // isVisible 只是我们提的要求，不代表系统真的给了位置：
-            // button 为 nil、或者它没有 window，都表示这一项**根本没被放进
-            // 菜单栏**，而这两种情况下 isVisible 照样是 true。
+            //
+            // **只有 menuBarPlaced 说实话。** isVisible 只是我们提的要求；
+            // button 和 window 存在也不代表系统给了位置 —— 被系统隐藏的项
+            // 三个值全是"正常"，只有那个 window 被停在屏幕外面。所以
+            // menuBarPlaced 现在问的是几何位置，不是"有没有 window"。
             "menuBarVisible": statusItem?.isVisible ?? false,
             "menuBarHasButton": statusItem?.button != nil,
-            "menuBarPlaced": statusItem?.button?.window != nil,
+            "menuBarPlaced": statusItemOnScreen,
+            "menuBarHasWindow": statusItem?.button?.window != nil,
+            // 换过几次名字才把图标抢救回来。>0 就说明系统隐藏过它。
+            "menuBarRescues": menuBarRescues,
+            "menuBarAutosaveName": menuBarAutosaveName,
             "menuBarWidth": statusItem?.button?.frame.width ?? -1,
             // 图标"在菜单栏上占着 31 点宽却看不见"时，剩下的问题只可能是
             // 它被放到哪儿了 —— 刘海底下、或者干脆在屏幕外。位置由
@@ -259,6 +372,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? data.write(to: url, options: .atomic)
     }
 
+    // MARK: - 定时器
+
+    /// 建一个**在弹窗和菜单打开时也照样跑**的定时器。
+    ///
+    /// `Timer.scheduledTimer` 把定时器挂在 `.default` 模式上，而
+    /// 弹一个 NSAlert（run loop 进 `.modalPanel`）或者点开菜单栏菜单
+    /// （进 `.eventTracking`）的时候，那个模式**根本不转** —— 挂在上面的
+    /// 定时器一个都不响，等对话框关掉才恢复。
+    ///
+    /// 这不是理论问题，实测撞上过：麦克风授权弹窗一挂在屏幕上，
+    /// 写状态文件的心跳就停了，于是 `verify.sh` 报"状态文件是 44 秒前写的"，
+    /// 看上去像 App 死了 —— 而它只是在等用户点一下。同样的道理，
+    /// 听写时点开菜单栏菜单，实时预览会整个卡住。
+    ///
+    /// `.common` 把这几种模式一起涵盖了。
+    private static func everyTick(
+        _ interval: TimeInterval, repeats: Bool = true, _ body: @escaping @MainActor () -> Void
+    ) -> Timer {
+        let timer = Timer(timeInterval: interval, repeats: repeats) { _ in
+            Task { @MainActor in body() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
+    }
+
     // MARK: - 配置热加载
 
     /// 盯着配置文件的修改时间。命令行改完要能立刻生效 ——
@@ -266,9 +404,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 命令行是很多人唯一能用的入口。
     private func startConfigWatch() {
         configStamp = Config.modificationDate()
-        configTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        configTimer = Self.everyTick(2) { [weak self] in
             guard let self else { return }
-            Task { @MainActor in self.reloadConfigIfChanged() }
+            reloadConfigIfChanged()
         }
     }
 
@@ -334,9 +472,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 让用户手动重启 App 是很差的体验，而且他们根本不会知道要这么做。
     private func startPermissionWatch() {
         guard permissionTimer == nil else { return }
-        permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        permissionTimer = Self.everyTick(2) { [weak self] in
             guard let self else { return }
-            Task { @MainActor in self.onPermissionTick() }
+            onPermissionTick()
         }
     }
 
@@ -726,6 +864,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 比不能取消更让人措手不及。
         sessionID += 1
         cancelledSessions.insert(sessionID - 1)
+        // 只有还可能在飞的那几个编号有意义。不修剪的话这个集合会跟着
+        // 使用次数一直长下去 —— 一天下来几千个整数，纯属白占。
+        cancelledSessions = cancelledSessions.filter { $0 > sessionID - 32 }
         stopEscapeWatch()
         stopPartialUpdates()
         _ = recorder.stop(minimumDuration: 0)
@@ -762,17 +903,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
 
         partialTimer?.invalidate()
-        partialTimer = Timer.scheduledTimer(
-            withTimeInterval: nextPartialDelay(),
-            repeats: false
-        ) { [weak self] _ in
-            // 先解包成不可变的 self 再进 Task —— [weak self] 捕获出来的是
-            // 可变的可选变量，Swift 不允许在并发上下文里直接引用它
+        partialTimer = Self.everyTick(nextPartialDelay(), repeats: false) { [weak self] in
             guard let self else { return }
-            Task { @MainActor in
-                self.requestPartial()
-                self.scheduleNextPartial()
-            }
+            requestPartial()
+            scheduleNextPartial()
         }
     }
 
@@ -903,6 +1037,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // "转写中不许按键"的时候撞不上这个竞态，允许接着说之后就每次都撞。
         let committed = committedText
 
+        // **焦点快照也一样要先拷出来。** 理由跟上面一模一样：focusAtStart
+        // 是实例变量，beginRecording 会把它换成新一段的焦点。等这一段的
+        // 结果回来再去读它，读到的是**新一段**那个输入框 —— 于是"焦点变了
+        // 就绝不插入"这条判断，正好在它唯一该拦住的场景里放行：
+        // 你在 A 里说了一段，切到 B 接着说，A 的文字就落进了 B。
+        let focus = focusAtStart
+
         if useFullPass {
             Task { @MainActor in
                 do {
@@ -912,7 +1053,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         reportEmptyResult(session: session)
                         return
                     }
-                    deliver(text, session: session)
+                    deliver(text, session: session, focus: focus)
                 } catch {
                     guard !cancelledSessions.contains(session) else { return }
                     reportFailure(error, session: session)
@@ -923,7 +1064,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 长录音：拼接已定稿的段落，只转最后那一段
         if audio.tail.isEmpty {
-            deliver(committed, session: session)
+            deliver(committed, session: session, focus: focus)
             return
         }
 
@@ -941,7 +1082,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     reportEmptyResult(session: session)
                     return
                 }
-                deliver(text, session: session)
+                deliver(text, session: session, focus: focus)
             } catch {
                 guard !cancelledSessions.contains(session) else { return }
                 reportFailure(error, session: session)
@@ -1025,21 +1166,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// 没有这一步的话，用户说了半分钟、中途点了一下别处，那段话就直接
     /// 没了 —— 而他根本不知道发生了什么。
-    private func deliverToClipboard(_ text: String, reason: String) {
+    private func deliverToClipboard(_ text: String, reason: String, stale: Bool = false) {
         TextInjector.copyToPasteboard(text)
+        NSLog("MixDictate: %@ —— 文字已复制到剪贴板", reason)
+
+        // 用户已经在说下一段了：浮层归那一段管。抢过来会把他的实时预览
+        // 盖掉，而且下一轮刷新马上又把这条消息冲掉 —— 等于既添了乱又
+        // 没说成话。存着，等这一轮忙完再说。
+        if stale, state == .recording || state == .transcribing {
+            deferredNotice = "上一段：\(reason)\n已复制，按 Cmd+V 粘贴：\n\(text)"
+            return
+        }
+
         overlay.show(style: .fullText, status: reason)
         overlay.update("\(reason)\n已复制，按 Cmd+V 粘贴：\n\(text)", isFinal: true)
         overlay.hide(after: 10)
-        NSLog("MixDictate: %@ —— 文字已复制到剪贴板", reason)
     }
 
-    private func deliver(_ text: String, session: Int) {
+    /// 上一段没能插进去时留下的话。等这一轮忙完再说 —— **但一定要说。**
+    /// 文字在剪贴板里没丢，可用户不知道的话，跟丢了没区别。
+    private func showDeferredNoticeIfAny() {
+        guard let notice = deferredNotice else { return }
+        deferredNotice = nil
+        overlay.show(style: .fullText, status: "上一段没能插入")
+        overlay.update(notice, isFinal: true)
+        overlay.hide(after: 10)
+    }
+
+    private func deliver(
+        _ text: String, session: Int, focus: TextInjector.FocusSnapshot?
+    ) {
         let stale = isStale(session)
 
         // 焦点变了就绝不往下插。插进别人的输入框比不插糟得多，
         // 而且用户看不出文字去了哪儿。
-        if let focus = focusAtStart, !focus.isCurrent() {
-            deliverToClipboard(text, reason: "焦点已经不在原来那个输入框")
+        //
+        // 比的是**按下说话键那一刻**的快照（调用方在 await 之前拷好传进来），
+        // 不是实例变量 —— 后者这会儿已经是下一段的焦点了。
+        if let focus, !focus.isCurrent() {
+            deliverToClipboard(text, reason: "焦点已经不在原来那个输入框", stale: stale)
             corrections.cancel()
             if !stale { state = .idle }
             return
@@ -1048,7 +1213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 实时写入过程中发现记忆对不上，已经停下了 —— 那时候输入框里
         // 已经有半截文字，再插一遍只会更乱。完整结果交给剪贴板。
         if config.liveInsertion, !liveInserter.trusted {
-            deliverToClipboard(text, reason: "实时写入已中断（输入框内容被改过）")
+            deliverToClipboard(
+                text, reason: "实时写入已中断（输入框内容被改过）", stale: stale)
             if !stale { state = .idle }
             return
         }

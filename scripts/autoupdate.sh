@@ -63,8 +63,23 @@ do_run() {
     # 拿不到就安静退出：可能只是断网或者在飞行模式，不值得吵用户。
     remote_sha="$(git ls-remote --heads origin "$BRANCH" 2>/dev/null | cut -f1)"
     if [ -z "$remote_sha" ]; then
+        # 但"断网"和"这个分支在远端根本不存在"必须分开。
+        #
+        # 后者是**永久**的：每分钟检查一次，每次都拿到空，每次都安静返回 ——
+        # 于是自动更新装得好好的，却一辈子不会有动静，而这件事在任何地方
+        # 都看不出来。（真的发生过：本地跟着一个已经被删掉的分支。）
+        # 跟坑 #4 是同一条规矩：任何"这轮先跳过"都得有个说话的出口。
+        if git ls-remote --heads origin >/dev/null 2>&1; then
+            if [ "$(cat "$LOG_DIR/missing_branch" 2>/dev/null || true)" != "$BRANCH" ]; then
+                printf '%s\n' "$BRANCH" > "$LOG_DIR/missing_branch"
+                say "远端没有分支 ${BRANCH} —— 自动更新永远不会有动静"
+                say "  换个分支：MIXDICTATE_BRANCH=main ./scripts/autoupdate.sh install"
+                notify "自动更新查不到分支 ${BRANCH}，一直没在更新"
+            fi
+        fi
         return 0
     fi
+    rm -f "$LOG_DIR/missing_branch"
 
     # 没有变化时什么都不记 —— 每分钟写一行"已是最新"只会把日志淹掉，
     # 真正出问题的那几行反而找不着
@@ -153,6 +168,24 @@ now)
     ;;
 
 install)
+    # **launchd 起的进程读不到「桌面 / 文稿 / 下载」。**
+    #
+    # 这几个目录受隐私保护，而 launchd 拉起来的任务没有那份授权。仓库要是
+    # 放在那儿，任务每分钟启动一次、每分钟 `Operation not permitted`，
+    # 一次都跑不起来 —— 而这一切只写在一个没人会去看的 .err.log 里，
+    # `launchctl print` 也照样说任务装好了。装之前先挡住。
+    case "$ROOT/" in
+    "$HOME/Desktop/"* | "$HOME/Documents/"* | "$HOME/Downloads/"*)
+        echo "仓库在 $ROOT" >&2
+        echo >&2
+        echo "launchd 读不到桌面、文稿、下载这三个目录，自动更新装上去也跑不起来，" >&2
+        echo "而且失败得一声不吭 —— 每分钟失败一次，只在 .err.log 里留一行。" >&2
+        echo >&2
+        echo "把仓库挪到别处（比如 ~/MixDictate）再装。" >&2
+        exit 1
+        ;;
+    esac
+
     mkdir -p "$(dirname "$PLIST")" "$LOG_DIR"
     cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -207,7 +240,32 @@ status)
     else
         echo "自动更新：未开启"
     fi
-    echo "仓库路径：$ROOT"
+    echo "这个脚本在：$ROOT"
+
+    # 装着的那个任务**未必**指向这份仓库 —— 机器上可以有好几份检出，
+    # 而任务里写死的是装的时候那一份。报错时必须说出它真正指向哪儿，
+    # 否则用户会去挪一个根本没问题的目录。
+    installed_root=""
+    if [ -f "$PLIST" ]; then
+        installed_script="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" \
+            "$PLIST" 2>/dev/null || true)"
+        [ -n "$installed_script" ] &&
+            installed_root="$(dirname "$(dirname "$installed_script")")"
+    fi
+    if [ -n "$installed_root" ] && [ "$installed_root" != "$ROOT" ]; then
+        echo "任务指向的是：$installed_root"
+    fi
+
+    # 「装上了」跟「跑得起来」是两件事。任务跑不起来时 launchctl 照样
+    # 说它在，唯一的痕迹在这个错误日志里。
+    if [ -s "$LOG_DIR/${LABEL}.err.log" ] &&
+        tail -n 20 "$LOG_DIR/${LABEL}.err.log" | grep -q "Operation not permitted"; then
+        echo "⚠️  任务根本跑不起来：launchd 没权限读 ${installed_root:-$ROOT}"
+        echo "    重装一份指向读得到的目录：cd $ROOT && ./scripts/autoupdate.sh install"
+    fi
+    if [ -f "$LOG_DIR/missing_branch" ]; then
+        echo "⚠️  远端没有分支 $(cat "$LOG_DIR/missing_branch") —— 一直没在更新"
+    fi
     echo
     if [ -f "$LOG" ]; then
         echo "最近记录："

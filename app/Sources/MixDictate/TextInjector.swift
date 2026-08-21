@@ -92,7 +92,7 @@ enum TextInjector {
     private static func pasteViaClipboard(_ text: String, keepOnPasteboard: Bool = false) {
         let pasteboard = NSPasteboard.general
         let previous = keepOnPasteboard ? nil : pasteboard.string(forType: .string)
-        copyToPasteboard(text)
+        let stamp = copyToPasteboard(text)
 
         // 给一点时间：用户刚松开说话键，修饰键状态需要先落定，
         // 否则合成的 Cmd+V 可能被残留的 Option 污染成别的快捷键。
@@ -102,6 +102,13 @@ enum TextInjector {
             guard !keepOnPasteboard else { return }
             // 粘贴是异步的，等目标 App 真正读完剪贴板再还原
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                // **只还原我们自己放上去的那一份。**
+                //
+                // 这半秒里剪贴板完全可能已经换主了：用户自己复制了东西，
+                // 或者下一段听写已经把它的文字放了上去（现在允许接着说
+                // 下一段，两次粘贴挨得很近）。那时候还原等于把别人的内容
+                // 冲掉 —— 下一段粘出来的会是我们这一段之前的旧剪贴板。
+                guard pasteboard.changeCount == stamp else { return }
                 pasteboard.clearContents()
                 if let previous {
                     pasteboard.setString(previous, forType: .string)
@@ -144,6 +151,10 @@ enum TextInjector {
     /// 混在一起被处理的话，打进去的字会落在还没删完的位置上。
     private static let settleMicroseconds: useconds_t = 12_000
 
+    private static func isHighSurrogate(_ unit: UInt16) -> Bool {
+        (0xD800...0xDBFF).contains(unit)
+    }
+
     /// 合成携带 Unicode 字符的按键事件，等价于把字敲进去。
     /// 不碰剪贴板，也不依赖目标 App 支持粘贴。
     private static func typeUnicode(_ text: String) {
@@ -155,7 +166,12 @@ enum TextInjector {
         var index = 0
 
         while index < units.count {
-            let end = min(index + chunkSize, units.count)
+            var end = min(index + chunkSize, units.count)
+            // 不能从代理对中间切开。UTF-16 里 emoji 之类的字符占两个码元，
+            // 切开之后两半分别发出去，目标 App 收到的是两个孤立的半字符 ——
+            // 出来就是乱码，而且正好是"偶尔某个字变成方块"这种查不动的样子。
+            if end < units.count, isHighSurrogate(units[end - 1]) { end -= 1 }
+            guard end > index else { break }
             var chunk = Array(units[index..<end])
             index = end
 
@@ -218,20 +234,14 @@ enum TextInjector {
     /// 代价是覆盖面比粘贴窄：终端、部分 Electron App 的文本视图
     /// 不支持这个属性。所以只在合成按键行不通时才用。
     private static func insertViaAccessibility(_ text: String) -> Bool {
-        let system = AXUIElementCreateSystemWide()
-
-        var focused: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                system, kAXFocusedUIElementAttribute as CFString, &focused
-            ) == .success,
-            let element = focused,
-            CFGetTypeID(element) == AXUIElementGetTypeID()
-        else { return false }
+        // 走 focusedElement()，不要自己再 CreateSystemWide 一次 ——
+        // **超时是在那里设的。** 原来这里是一份没设超时的副本，于是
+        // 「安全输入模式下插入」这条路是唯一还会把主线程钉死好几秒的
+        // 同步跨进程调用：目标 App 一忙，浮层就卡在"整理中"不动。
+        guard let target = focusedElement() else { return false }
 
         // 设置"选中的文字"等价于在光标处插入：没有选区时就是纯插入，
         // 有选区时替换掉它 —— 跟真的敲字行为一致。
-        let target = element as! AXUIElement
         let status = AXUIElementSetAttributeValue(
             target, kAXSelectedTextAttribute as CFString, text as CFString
         )
@@ -346,10 +356,14 @@ enum TextInjector {
         return target
     }
 
-    static func copyToPasteboard(_ text: String) {
+    /// - Returns: 写完之后的 changeCount。拿它可以判断"剪贴板还是不是
+    ///   我们放上去的那一份" —— 还原旧内容之前必须问一次。
+    @discardableResult
+    static func copyToPasteboard(_ text: String) -> Int {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        return pasteboard.changeCount
     }
 
     static var hasAccessibilityPermission: Bool {

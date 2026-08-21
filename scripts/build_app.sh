@@ -80,6 +80,21 @@ fi
 # ad-hoc 没有身份，macOS 只能拿二进制哈希当身份 —— 重编译一次哈希就变，
 # 麦克风和辅助功能的授权全部对不上，而且系统设置里的开关照常显示为开。
 SIGN_IDENTITY="${MIXDICTATE_SIGN_IDENTITY:-MixDictate Dev}"
+if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+    # 首选身份没有，但机器上**可能已经有别的**能用的身份（装过 Xcode 的
+    # 基本都有一张 Apple Development）。任何一张固定身份都比 ad-hoc 强：
+    # ad-hoc 没有身份，TCC 只能拿二进制哈希当身份，重编译一次授权就全失效，
+    # 而系统设置里的开关照常显示为开。所以宁可用它不认识的那张，
+    # 也别掉回 ad-hoc —— 但要把用了哪张说出来。
+    fallback="$(security find-identity -v -p codesigning 2>/dev/null |
+        sed -n 's/.*"\(Apple Development:.*\)"/\1/p;s/.*"\(Developer ID Application:.*\)"/\1/p' |
+        head -1)"
+    if [ -n "$fallback" ]; then
+        echo "==> 没有「${SIGN_IDENTITY}」，改用机器上已有的身份"
+        SIGN_IDENTITY="$fallback"
+    fi
+fi
+
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
     echo "==> 用固定身份签名：$SIGN_IDENTITY"
     codesign --force --sign "$SIGN_IDENTITY" "$BUNDLE"

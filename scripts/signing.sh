@@ -60,13 +60,39 @@ setup)
         exit 1
     fi
 
-    openssl pkcs12 -export -out "$tmp/bundle.p12" \
-        -inkey "$tmp/key.pem" -in "$tmp/cert.pem" -passout pass: >/dev/null 2>&1
+    # **必须导成"老式" PKCS#12。**
+    #
+    # OpenSSL 3 默认用 AES + SHA-256 做 PKCS#12 的封装，而 macOS 的
+    # Security 框架读不了那一套，`security import` 只会甩一句
+    # 「MAC verification failed during PKCS12 import (wrong password?)」——
+    # 一句彻头彻尾的误导：密码没错，是算法不认识。
+    # 空密码也一起换掉，那是同一条错误信息的第二个来源。
+    #
+    # 这个脚本因此在这台机器上从来没成功过，而它偏偏是"权限不再失效"
+    # 的唯一解药 —— 于是每次重编译权限都掉，每次都以为是别的原因。
+    if ! openssl pkcs12 -export -out "$tmp/bundle.p12" \
+        -inkey "$tmp/key.pem" -in "$tmp/cert.pem" -passout pass:mixdictate \
+        -macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES \
+        -legacy 2>"$tmp/err"; then
+        # 老一点的 openssl（1.1）没有 -legacy，那时默认就是老式的
+        if ! openssl pkcs12 -export -out "$tmp/bundle.p12" \
+            -inkey "$tmp/key.pem" -in "$tmp/cert.pem" -passout pass:mixdictate \
+            -macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES 2>"$tmp/err"; then
+            cat "$tmp/err" >&2
+            echo "打包证书失败。走图形界面那条路吧，见 README「固定签名身份」。" >&2
+            exit 1
+        fi
+    fi
 
     echo "==> 导入钥匙串"
     # -T /usr/bin/codesign：只授权 codesign 用这把私钥，不是对所有程序开放
-    if ! security import "$tmp/bundle.p12" -k "$LOGIN_KEYCHAIN" -P "" \
-        -T /usr/bin/codesign >/dev/null 2>&1; then
+    #
+    # 出错要**原样打出来**。原来这里是 >/dev/null 2>&1 加一句"导入失败"，
+    # 于是唯一能说清哪儿不对的那行字被丢掉了 —— 这个项目里所有难查的坑
+    # 都是这么来的。
+    if ! security import "$tmp/bundle.p12" -k "$LOGIN_KEYCHAIN" -P mixdictate \
+        -T /usr/bin/codesign 2>"$tmp/err"; then
+        cat "$tmp/err" >&2
         echo "导入失败。走图形界面那条路吧，见 README「固定签名身份」。" >&2
         exit 1
     fi

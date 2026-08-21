@@ -98,13 +98,18 @@ final class OverlayWindow {
     private func startPulse() {
         guard style == .compact else { return }
         pulseTimer?.invalidate()
-        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // 必须挂在 .common 上。挂 .default 的话，弹窗或者菜单一打开
+        // 这个呼吸点就不动了 —— 而它存在的全部意义就是"让人看出程序还活着"，
+        // 偏偏在最像卡死的时候停下来。
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 self.pulseBright.toggle()
                 self.applyStatus(self.currentStatus)
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        pulseTimer = timer
     }
 
     private func stopPulse() {

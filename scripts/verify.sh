@@ -15,7 +15,6 @@ STATUS="$SUPPORT/logs/app_status.json"
 CONFIG="$HOME/.config/mixdictate/config.json"
 APP="/Applications/MixDictate.app"
 PORT="${MIXDICTATE_PORT:-8765}"
-IDENTITY="${MIXDICTATE_SIGN_IDENTITY:-MixDictate Dev}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 fails=0
@@ -82,32 +81,58 @@ if [ -f "$STATUS" ]; then
         fix "重启 App"
     fi
 
-    # 菜单栏图标是这个 App 唯一的入口。按住 Command 把它拖出菜单栏，
-    # macOS 会把"隐藏"记进偏好设置，以后每次启动都不显示 —— 而 App
-    # 照常在跑，热键和插入都正常，只是没有任何地方能点进去。
-    case "$(field menuBarVisible)" in
-        false) fail "菜单栏图标被隐藏了"
-               fix "更新到最新版即可（启动时会强制显示）" ;;
-        true)
-            # isVisible 只是 App 提的要求。真正说明问题的是系统有没有
-            # 给它一个位置 —— 没给的话 isVisible 照样是 true。
-            case "$(field menuBarPlaced)" in
-                false) fail "菜单栏图标没被系统放进菜单栏（menuBarVisible 是 true，但它没有窗口）"
-                       fix "open -a MixDictate 可以打开设置窗口，不用菜单栏也能操作"
-                       fix "把这一行连同 menuBarHasButton / menuBarWidth 一起报上来" ;;
-                true)  pass "菜单栏图标已放进菜单栏（宽度 $(field menuBarWidth)）" ;;
-                *)     pass "菜单栏图标可见（看不见的话：open -a MixDictate 会弹出设置窗口）" ;;
-            esac ;;
-        *)     : ;;   # 旧版 App 没写这个字段，不当回事
-    esac
+    # 菜单栏图标是这个 App 唯一的入口，而它消失的时候一声不吭：
+    # App 照常在跑，热键和插入都正常，只是没有任何地方能点进去。
+    #
+    # menuBarVisible / menuBarHasButton / menuBarHasWindow 三个都会骗人 ——
+    # 被系统隐藏的项这三个值全是"正常"，只有窗口被停在屏幕外面。
+    # 所以这里只认 menuBarPlaced（App 那边问的是几何位置）。
+    # menuBarHasWindow 只有新版才写。旧版的 menuBarPlaced 问的是
+    # "有没有 window"，而被隐藏的项照样有 window —— 那个答案是假的，
+    # 不能拿它报平安。
+    if [ -z "$(field menuBarHasWindow)" ]; then
+        if [ -n "$(field menuBarVisible)" ]; then
+            warn "这版 App 报的菜单栏状态不可信（图标被系统隐藏时它也说正常）"
+            fix "./install.sh 更新到新版"
+        fi
+    else
+        case "$(field menuBarPlaced)" in
+            false)
+                fail "菜单栏图标没被放进菜单栏（窗口停在 $(field menuBarX),$(field menuBarY)，在屏幕外）"
+                fix "open -a MixDictate 会弹出设置窗口 —— 不用菜单栏也能操作"
+                fix "重启 App：会换个名字重建，通常一次就能绕开系统的隐藏名单"
+                ;;
+            true)
+                pass "菜单栏图标已放进菜单栏（宽度 $(field menuBarWidth)，位置 $(field menuBarX),$(field menuBarY)）"
+                case "$(field menuBarRescues)" in
+                    ""|0) : ;;
+                    *) warn "启动时被系统隐藏过，换了 $(field menuBarRescues) 次名字才放上去（现在叫 $(field menuBarAutosaveName)）" ;;
+                esac
+                ;;
+        esac
+    fi
 fi
 
-# 签名身份不固定的话，上面两条早晚会再失效一次
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
-    pass "签名身份固定（${IDENTITY}）—— 重编译不会再掉权限"
-else
-    warn "还在用 ad-hoc 签名 —— 每次重编译权限都会静默失效"
-    fix "./scripts/signing.sh setup"
+# 签名身份不固定的话，上面两条早晚会再失效一次。
+#
+# 问的是**装在 /Applications 里那份到底是怎么签的**，不是"钥匙串里有没有
+# 某张证书"。原来查的是后者，于是这里会答非所问：证书在不在跟这个 App
+# 用没用它是两件事，而 TCC 只认后者。
+if [ -d "$APP" ]; then
+    signature="$(codesign -dvv "$APP" 2>&1 || true)"
+    case "$signature" in
+    *"Signature=adhoc"*)
+        warn "还在用 ad-hoc 签名 —— 每次重编译权限都会静默失效"
+        fix "./scripts/signing.sh setup（机器上已有 Apple Development 证书的话会自动用它）"
+        ;;
+    *Authority=*)
+        authority="$(printf '%s\n' "$signature" | sed -n 's/^Authority=//p' | head -1)"
+        pass "签名身份固定（${authority}）—— 重编译不会再掉权限"
+        ;;
+    *)
+        warn "看不出 $APP 是怎么签的"
+        ;;
+    esac
 fi
 
 # ---------------------------------------------------------------- 采集（坑 #1 #2）
@@ -208,7 +233,11 @@ fi
 autostart_plist="$HOME/Library/LaunchAgents/${script_label:-dev.mixdictate.app}.plist"
 if [ -f "$autostart_plist" ]; then
     pass "已开启（登录后自动拉起）"
-    if grep -q "KeepAlive" "$autostart_plist"; then
+    # 只认真正的键。plist 里有一段注释专门解释"为什么不写 KeepAlive"，
+    # 而原来这里 grep 的是裸字符串 —— 于是那段注释自己把检查点着了，
+    # 每次都报一个不存在的故障。**查东西在不在，就得按它真正的形状查。**
+    if /usr/libexec/PlistBuddy -c "Print :KeepAlive" "$autostart_plist" \
+        >/dev/null 2>&1; then
         fail "plist 里有 KeepAlive —— 退出 App 后 launchd 会把它拉回来，等于关不掉"
         fix "./scripts/autostart.sh install 重装一遍（新版不写 KeepAlive）"
     fi
@@ -239,6 +268,29 @@ if [ -n "$app_pid" ] && [ -x "$APP_BINARY" ]; then
         fix "pkill -x MixDictate && open /Applications/MixDictate.app"
     else
         pass "跑着的是当前这份代码"
+    fi
+fi
+
+# ---------------------------------------------------------------- 自动更新
+# 「装上了」和「跑得起来」是两件事，而这里错开过一次：任务指向的仓库放在
+# 桌面上，launchd 读不到那个目录，于是每分钟启动一次、每分钟失败一次，
+# 一次都没跑成过。launchctl 照样说它装着，日志淹在一个没人看的文件里。
+autoupdate_plist="$HOME/Library/LaunchAgents/dev.mixdictate.autoupdate.plist"
+autoupdate_err="$HOME/Library/Logs/mixdictate/dev.mixdictate.autoupdate.err.log"
+if [ -f "$autoupdate_plist" ]; then
+    echo
+    echo "自动更新"
+    autoupdate_script="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" \
+        "$autoupdate_plist" 2>/dev/null || true)"
+    if [ -s "$autoupdate_err" ] &&
+        tail -n 20 "$autoupdate_err" | grep -q "Operation not permitted"; then
+        fail "任务跑不起来：launchd 没权限读 $(dirname "$(dirname "$autoupdate_script")")"
+        fix "在读得到的仓库目录里重装：./scripts/autoupdate.sh install"
+    elif [ -f "$HOME/Library/Logs/mixdictate/missing_branch" ]; then
+        fail "远端没有它追的那个分支，一直没在更新"
+        fix "MIXDICTATE_BRANCH=main ./scripts/autoupdate.sh install"
+    else
+        pass "已开启"
     fi
 fi
 

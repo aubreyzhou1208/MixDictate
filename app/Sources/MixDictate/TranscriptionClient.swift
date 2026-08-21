@@ -32,7 +32,9 @@ enum TranscriptionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .serverUnreachable:
-            return "连不上本地转写服务，先运行 make server"
+            // 服务现在由 App 自己管，让用户去跑 make server 是过时的指路 ——
+            // 他照做只会起第二个抢同一个端口的进程。
+            return "连不上本地转写服务 —— 菜单里「重启转写服务」，还不行就看服务日志"
         case .server(let message):
             return message
         }
