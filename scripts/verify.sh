@@ -282,7 +282,12 @@ if [ -f "$autoupdate_plist" ]; then
     echo "自动更新"
     autoupdate_script="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" \
         "$autoupdate_plist" 2>/dev/null || true)"
+    # 日志比 plist 还老，说的就不是现在这个任务 —— 重装过一次之后，
+    # 上一个任务的报错还躺在同一个文件里。拿它报故障等于对着尸体验伤。
+    autoupdate_err_at="$(stat -f %m "$autoupdate_err" 2>/dev/null || echo 0)"
+    autoupdate_plist_at="$(stat -f %m "$autoupdate_plist" 2>/dev/null || echo 0)"
     if [ -s "$autoupdate_err" ] &&
+        [ "$autoupdate_err_at" -ge "$autoupdate_plist_at" ] &&
         tail -n 20 "$autoupdate_err" | grep -q "Operation not permitted"; then
         fail "任务跑不起来：launchd 没权限读 $(dirname "$(dirname "$autoupdate_script")")"
         fix "在读得到的仓库目录里重装：./scripts/autoupdate.sh install"

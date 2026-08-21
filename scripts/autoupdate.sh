@@ -220,6 +220,11 @@ install)
 </plist>
 PLIST_EOF
 
+    # 旧任务留下的错误日志跟新任务无关了。不清掉的话，下面那条
+    # 「任务跑不起来」的检查会读到上一个任务的尸体，然后对着一个刚装好的
+    # 任务报故障 —— 一个自己会说谎的检查比没有检查更糟。
+    : > "$LOG_DIR/${LABEL}.err.log"
+
     launchctl bootout "gui/${UID}/${LABEL}" 2>/dev/null || true
     launchctl bootstrap "gui/${UID}" "$PLIST"
 
@@ -258,7 +263,9 @@ status)
 
     # 「装上了」跟「跑得起来」是两件事。任务跑不起来时 launchctl 照样
     # 说它在，唯一的痕迹在这个错误日志里。
-    if [ -s "$LOG_DIR/${LABEL}.err.log" ] &&
+    err_at="$(stat -f %m "$LOG_DIR/${LABEL}.err.log" 2>/dev/null || echo 0)"
+    plist_at="$(stat -f %m "$PLIST" 2>/dev/null || echo 0)"
+    if [ -s "$LOG_DIR/${LABEL}.err.log" ] && [ "$err_at" -ge "$plist_at" ] &&
         tail -n 20 "$LOG_DIR/${LABEL}.err.log" | grep -q "Operation not permitted"; then
         echo "⚠️  任务根本跑不起来：launchd 没权限读 ${installed_root:-$ROOT}"
         echo "    重装一份指向读得到的目录：cd $ROOT && ./scripts/autoupdate.sh install"
