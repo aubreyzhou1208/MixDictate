@@ -287,28 +287,6 @@ struct SettingsView: View {
                         """)
             }
 
-            section("语言", "说单一语言时锁死它，识别更稳") {
-                Picker("识别语言", selection: $model.config.language) {
-                    ForEach(SpeechLanguage.allCases, id: \.rawValue) { option in
-                        Text(option.label).tag(option.rawValue)
-                    }
-                }
-                .help("""
-                    默认「自动识别」，模型自己判断说的是哪种语言。
-
-                    **中英混说就用自动**，锁了反而会压掉另一种语言。
-
-                    但短句子的语种判定最容易出错 —— 粤语和英语在音节上重合不少，模型一犹豫整句就倒向英文。所以只说一种语言（尤其是粤语）时，锁死它会稳很多。
-
-                    改完立刻生效，不用重启转写服务。
-                    """)
-
-                Text("中英混说保持「自动识别」。只说粤语／日语／韩语时锁定对应那项。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             section("识别模型", "换模型会重启转写服务") {
                 Picker("模型", selection: $model.config.model) {
                     ForEach(ASRModel.allCases, id: \.rawValue) { option in

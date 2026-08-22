@@ -153,14 +153,6 @@ struct Config {
     /// 代价见设置界面里的说明 —— 默认关闭。
     var liveInsertion: Bool = false
 
-    /// 锁定识别语言。空 = 让模型自己判断（默认，也是中英混说该用的）。
-    ///
-    /// 模型支持的语种远不止中英，但**短句子的语种判定最容易出错** ——
-    /// 粤语和英语在音节上重合不少，模型一犹豫整句就倒向英文。
-    /// 说单一语言（尤其是粤语）时锁死它，识别会稳很多；
-    /// 中英混说时**不要**锁，锁了反而会压掉另一种语言。
-    var language: String = ""
-
     /// 菜单栏图标旁边额外显示「MIX」几个字。
     ///
     /// 默认关，它是给"图标到底在不在菜单栏上"这个问题准备的：图标可能
@@ -273,8 +265,6 @@ extension Config: Codable {
             ?? fallback.fullPassMaxSeconds
         liveInsertion = try c.decodeIfPresent(Bool.self, forKey: .liveInsertion)
             ?? fallback.liveInsertion
-        language = try c.decodeIfPresent(String.self, forKey: .language)
-            ?? fallback.language
         menuBarLabel = try c.decodeIfPresent(Bool.self, forKey: .menuBarLabel)
             ?? fallback.menuBarLabel
         alwaysCopy = try c.decodeIfPresent(Bool.self, forKey: .alwaysCopy)
@@ -287,32 +277,6 @@ extension Config: Codable {
 }
 
 /// 可选的模型。0.6B 够日常用，1.7B 更准但更吃内存和时间。
-/// 可以锁定的识别语言。
-///
-/// 值直接传给模型当强制语种，所以用的是库里那张规范表用的英文全名
-/// （`Chinese`、`English`…）。粤语不在那张表里 —— 库会警告一句然后把
-/// 字符串原样塞进提示词，而 Qwen3-ASR 本身是支持粤语的，所以传
-/// `Cantonese` 而不是 `yue`：`yue` 到不了模型认识的那个词。
-enum SpeechLanguage: String, CaseIterable {
-    case auto = ""
-    case mandarin = "Chinese"
-    case cantonese = "Cantonese"
-    case english = "English"
-    case japanese = "Japanese"
-    case korean = "Korean"
-
-    var label: String {
-        switch self {
-        case .auto:      return "自动识别（中英混说用这个）"
-        case .mandarin:  return "锁定中文（普通话）"
-        case .cantonese: return "锁定粤语"
-        case .english:   return "锁定英语"
-        case .japanese:  return "锁定日语"
-        case .korean:    return "锁定韩语"
-        }
-    }
-}
-
 enum ASRModel: String, CaseIterable {
     case small = "Qwen/Qwen3-ASR-0.6B"
     case large = "Qwen/Qwen3-ASR-1.7B"
