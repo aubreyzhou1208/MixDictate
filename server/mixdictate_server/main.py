@@ -221,6 +221,7 @@ async def transcribe(
     spoken_symbols: bool = Form(True),
     merge_pause_periods: bool = Form(True),
     split_clauses: bool = Form(True),
+    language: str = Form(""),
     partial: bool = Form(False),
 ) -> JSONResponse:
     started = time.monotonic()
@@ -254,7 +255,7 @@ async def transcribe(
         # 落到不同工作线程上会抛 "There is no Stream(gpu, 1) in current
         # thread."。Transcriber 内部固定用同一个专用线程解决这个问题。
         result = await transcriber.transcribe_async(
-            tmp_path, context=table.context()
+            tmp_path, context=table.context(), language=language
         )
 
         # 结果为空时，先怀疑是热词偏置把解码带跑偏了 —— 去掉 context 再试一次。
@@ -263,7 +264,9 @@ async def transcribe(
         # 而实时反馈最怕的就是慢。
         if not partial and not result.text.strip() and table.context():
             log.warning("带热词偏置的结果为空，去掉 context 重试")
-            retry = await transcriber.transcribe_async(tmp_path, context="")
+            retry = await transcriber.transcribe_async(
+                tmp_path, context="", language=language
+            )
             if retry.text.strip():
                 log.warning("去掉 context 后有结果了 —— 空结果是热词偏置造成的")
                 result = retry

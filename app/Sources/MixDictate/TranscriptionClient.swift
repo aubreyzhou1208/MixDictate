@@ -96,6 +96,11 @@ struct TranscriptionClient {
         body.append(wav)
         line("\r\n")
 
+        // 锁定语言。空字符串 = 让模型自己判断，服务端按空处理。
+        line("--\(boundary)\r\n")
+        line("Content-Disposition: form-data; name=\"language\"\r\n\r\n")
+        line("\(config.language)\r\n")
+
         line("--\(boundary)\r\n")
         line("Content-Disposition: form-data; name=\"strip_fillers\"\r\n\r\n")
         line("\(raw ? false : config.stripFillers)\r\n")

@@ -137,7 +137,7 @@ class Transcriber:
         self._session = Session(model=self.model)
         log.info("模型加载完成（线程 %s）", threading.current_thread().name)
 
-    def _run(self, audio_path: str, context: str) -> ASRResult:
+    def _run(self, audio_path: str, context: str, language: str = "") -> ASRResult:
         self.worker_thread = threading.current_thread().name
         self.warmed_at = time.monotonic()
 
@@ -149,12 +149,31 @@ class Transcriber:
         self._ensure_loaded()
         assert self._session is not None
 
+        # language 为空 = 让模型自己判断（默认）。指定了就锁死 ——
+        # 短句子的语种判定最容易错，而粤语和英语在音节上重合不少，
+        # 模型一犹豫就会整句倒向英文。
+        kwargs: dict[str, object] = {}
+        if context:
+            kwargs["context"] = context
+        if language:
+            kwargs["language"] = language
+
         try:
-            result = self._session.transcribe(audio_path, context=context or None)
+            result = self._session.transcribe(audio_path, **kwargs)
         except TypeError:
-            # 老版本的 mlx-qwen3-asr 可能没有 context 参数，降级为无偏置
-            log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
-            result = self._session.transcribe(audio_path)
+            # 老版本的库可能没有这些关键字。逐个退，而不是一次全丢 ——
+            # 先丢 language（少了它只是不锁语种），再丢 context（少了它热词偏置失效）。
+            if "language" in kwargs:
+                log.warning("当前 mlx-qwen3-asr 不支持 language 参数，已跳过语言锁定")
+                kwargs.pop("language")
+                try:
+                    result = self._session.transcribe(audio_path, **kwargs)
+                except TypeError:
+                    log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
+                    result = self._session.transcribe(audio_path)
+            else:
+                log.warning("当前 mlx-qwen3-asr 不支持 context 参数，热词偏置已跳过")
+                result = self._session.transcribe(audio_path)
 
         text = extract_text(result)
         if not text.strip():
@@ -233,13 +252,17 @@ class Transcriber:
         self._executor.submit(self._warmup_now, STALE_WARMUP_SECONDS)
         return True
 
-    def transcribe(self, audio_path: str, *, context: str = "") -> ASRResult:
+    def transcribe(
+        self, audio_path: str, *, context: str = "", language: str = ""
+    ) -> ASRResult:
         """同步调用（自检脚本用）。仍然走那个专用线程。"""
-        return self._executor.submit(self._run, audio_path, context).result()
+        return self._executor.submit(self._run, audio_path, context, language).result()
 
-    async def transcribe_async(self, audio_path: str, *, context: str = "") -> ASRResult:
+    async def transcribe_async(
+        self, audio_path: str, *, context: str = "", language: str = ""
+    ) -> ASRResult:
         """异步调用（HTTP 服务用）。推理不会阻塞事件循环。"""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            self._executor, self._run, audio_path, context
+            self._executor, self._run, audio_path, context, language
         )
